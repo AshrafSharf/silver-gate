@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle } from 'lucide-react';
+import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye } from 'lucide-react';
+import PDFViewerModal from '../components/PDFViewerModal';
 
 export default function ScannedItemsPage() {
   const queryClient = useQueryClient();
@@ -21,6 +22,10 @@ export default function ScannedItemsPage() {
   // Multi-select state
   const [selectedItems, setSelectedItems] = useState([]); // Array of {id, order}
   const [selectionCounter, setSelectionCounter] = useState(0);
+
+  // PDF viewer modal state
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+  const [selectedPdfItem, setSelectedPdfItem] = useState(null);
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -136,6 +141,28 @@ export default function ScannedItemsPage() {
 
   const canSelect = (item) => {
     return item.latex_conversion_status === 'completed' && item.latex_doc;
+  };
+
+  // Check if item can be viewed as PDF
+  const canViewPdf = (item) => {
+    const scanType = item.scan_type?.toLowerCase();
+    return scanType === 'pdf' || scanType === 'email_attachment' ||
+           (scanType === 'url' && item.item_data?.toLowerCase().endsWith('.pdf'));
+  };
+
+  // Get the PDF URL for viewing
+  const getPdfUrl = (item) => {
+    // For items with binary content or base64, use the backend endpoint
+    if (item.scan_type === 'email_attachment' || !item.item_data?.startsWith('http')) {
+      return `/api/scanned-items/${item.id}/pdf`;
+    }
+    // For URL-based PDFs, use the URL directly
+    return item.item_data;
+  };
+
+  const handleViewPdf = (item) => {
+    setSelectedPdfItem(item);
+    setPdfViewerOpen(true);
   };
 
   const hasActiveJob = activeJob?.data?.active_book_id && activeJob?.data?.active_chapter_id;
@@ -386,9 +413,19 @@ export default function ScannedItemsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-4">
-                      <p className="text-gray-800 max-w-xs truncate" title={item.item_data}>
-                        {item.item_data}
-                      </p>
+                      {canViewPdf(item) ? (
+                        <button
+                          onClick={() => handleViewPdf(item)}
+                          className="text-blue-600 hover:text-blue-800 hover:underline max-w-xs truncate text-left"
+                          title={item.item_data}
+                        >
+                          {item.item_data}
+                        </button>
+                      ) : (
+                        <p className="text-gray-800 max-w-xs truncate" title={item.item_data}>
+                          {item.item_data}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-4">
                       <p className="text-gray-800 text-sm">
@@ -422,13 +459,24 @@ export default function ScannedItemsPage() {
                       {new Date(item.created_at).toLocaleString()}
                     </td>
                     <td className="px-4 py-4 text-right">
-                      <button
-                        onClick={() => deleteItemMutation.mutate(item.id)}
-                        className="text-red-600 hover:text-red-800"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {canViewPdf(item) && (
+                          <button
+                            onClick={() => handleViewPdf(item)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="View PDF"
+                          >
+                            <Eye className="w-5 h-5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteItemMutation.mutate(item.id)}
+                          className="text-red-600 hover:text-red-800"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -524,6 +572,17 @@ export default function ScannedItemsPage() {
           </div>
         </div>
       )}
+
+      {/* PDF Viewer Modal */}
+      <PDFViewerModal
+        isOpen={pdfViewerOpen}
+        onClose={() => {
+          setPdfViewerOpen(false);
+          setSelectedPdfItem(null);
+        }}
+        pdfUrl={selectedPdfItem ? getPdfUrl(selectedPdfItem) : null}
+        title={selectedPdfItem?.item_data || 'PDF Document'}
+      />
     </div>
   );
 }

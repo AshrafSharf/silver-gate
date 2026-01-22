@@ -26,6 +26,45 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, data: item });
 }));
 
+// Get PDF content for viewing
+router.get('/:id/pdf', asyncHandler(async (req, res) => {
+  const item = await scannedItemService.findById(req.params.id);
+  if (!item) {
+    return res.status(404).json({ success: false, error: 'Scanned item not found' });
+  }
+
+  // If content is stored as binary (BYTEA for email attachments)
+  if (item.content) {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="document.pdf"');
+    return res.send(item.content);
+  }
+
+  // If item_data is a URL, redirect to it
+  if (item.item_data && (item.item_data.startsWith('http://') || item.item_data.startsWith('https://'))) {
+    return res.redirect(item.item_data);
+  }
+
+  // If item_data is base64 encoded
+  if (item.item_data) {
+    try {
+      // Check if it's a data URL or raw base64
+      let base64Data = item.item_data;
+      if (base64Data.startsWith('data:')) {
+        base64Data = base64Data.split(',')[1];
+      }
+      const pdfBuffer = Buffer.from(base64Data, 'base64');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline; filename="document.pdf"');
+      return res.send(pdfBuffer);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: 'Invalid PDF data format' });
+    }
+  }
+
+  return res.status(404).json({ success: false, error: 'No PDF content available' });
+}));
+
 // Create scanned item (uses active job's book/chapter)
 router.post('/', asyncHandler(async (req, res) => {
   const { item_data, scan_type, status, metadata } = req.body;

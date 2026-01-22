@@ -9,13 +9,15 @@ const MCQ_PARSING_INSTRUCTIONS = `
 Extract all multiple choice questions (MCQs) from this document.
 
 For each question, identify:
-1. The question text (including any mathematical notation)
-2. All answer choices (labeled A, B, C, D, etc.)
+1. The question label/number as it appears in the document (e.g., "1", "2", "Q1", "Question 5", etc.)
+2. The question text (including any mathematical notation)
+3. All answer choices (labeled A, B, C, D, etc.)
 
 Return the result in the following JSON format:
 {
   "questions": [
     {
+      "question_label": "1",
       "text": "Question text here with $math$ notation preserved",
       "choices": ["A. choice1", "B. choice2", "C. choice3", "D. choice4"]
     }
@@ -23,10 +25,11 @@ Return the result in the following JSON format:
 }
 
 Important:
+- Preserve the original question label/number exactly as it appears in the document
 - Preserve LaTeX math notation ($...$ and $$...$$)
 - Include all answer choices for each question
 - Maintain the original question numbering if present
-- If a question has sub-parts, treat each sub-part as a separate question
+- If a question has sub-parts, treat each sub-part as a separate question with appropriate labels (e.g., "1a", "1b")
 `;
 
 export const questionExtractionService = {
@@ -340,11 +343,13 @@ export const questionExtractionService = {
 
       // If no JSON found, try to parse markdown format
       const questions = [];
-      const questionRegex = /(?:^|\n)(?:\d+[\.\)]\s*|Q(?:uestion)?[\s\.:]+\d*\s*)(.*?)(?=\n(?:\d+[\.\)]|Q(?:uestion)?[\s\.:]+\d*|\Z))/gis;
+      const questionRegex = /(?:^|\n)((?:\d+[\.\)]\s*|Q(?:uestion)?[\s\.:]+\d*\s*))(.*?)(?=\n(?:\d+[\.\)]|Q(?:uestion)?[\s\.:]+\d*|\Z))/gis;
       const choiceRegex = /\n\s*([A-E])[\.\)]\s*(.+)/gi;
 
       let match;
+      let questionIndex = 1;
       while ((match = questionRegex.exec(rawContent)) !== null) {
+        const questionLabelRaw = match[1] || '';
         const questionBlock = match[0];
         const choices = [];
 
@@ -354,6 +359,11 @@ export const questionExtractionService = {
         }
 
         if (choices.length > 0) {
+          // Extract question label (number/identifier)
+          const questionLabel = questionLabelRaw
+            .replace(/[\.\)\s:]+$/, '')
+            .trim() || String(questionIndex);
+
           // Extract question text (before choices)
           const questionText = questionBlock
             .split(/\n\s*[A-E][\.\)]/)[0]
@@ -362,9 +372,12 @@ export const questionExtractionService = {
             .trim();
 
           questions.push({
+            question_label: questionLabel,
             text: questionText,
             choices: choices,
           });
+
+          questionIndex++;
         }
       }
 
