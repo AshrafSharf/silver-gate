@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BookOpen, X, Save, Edit2, FileQuestion, CheckCircle } from 'lucide-react';
+import { BookOpen, X, Save, Edit2, FileQuestion, CheckCircle, Code, Eye } from 'lucide-react';
 import QuestionText from './QuestionText';
 
 export default function LessonModal({ lesson, onClose }) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [showJsonView, setShowJsonView] = useState(false);
   const [editedName, setEditedName] = useState(lesson.name);
   const [editedItems, setEditedItems] = useState(
     lesson.lesson_items || []
@@ -122,6 +123,19 @@ export default function LessonModal({ lesson, onClose }) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* JSON View Toggle */}
+            <button
+              onClick={() => setShowJsonView(!showJsonView)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                showJsonView
+                  ? 'bg-gray-700 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title={showJsonView ? 'Show formatted view' : 'Show JSON view'}
+            >
+              {showJsonView ? <Eye className="w-4 h-4" /> : <Code className="w-4 h-4" />}
+              {showJsonView ? 'View' : 'JSON'}
+            </button>
             {isEditing ? (
               <>
                 <button
@@ -139,7 +153,7 @@ export default function LessonModal({ lesson, onClose }) {
                   Cancel
                 </button>
               </>
-            ) : (
+            ) : !showJsonView && (
               <button
                 onClick={() => setIsEditing(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -160,7 +174,31 @@ export default function LessonModal({ lesson, onClose }) {
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4 bg-gray-50">
-          {editedItems.length > 0 ? (
+          {/* JSON View */}
+          {showJsonView ? (
+            editedItems.length > 0 ? (
+              <div className="space-y-4">
+                {editedItems.map((lessonItem, index) => (
+                  <div key={lessonItem.id || index} className="bg-white rounded-lg border shadow-sm p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="flex-shrink-0 w-8 h-8 bg-gray-700 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                        {lessonItem.question_solution_item_json?.question_label || index + 1}
+                      </span>
+                      <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
+                    </div>
+                    <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
+                      {JSON.stringify(lessonItem.question_solution_item_json, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <Code className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500">No JSON data available</p>
+              </div>
+            )
+          ) : editedItems.length > 0 ? (
             <div className="space-y-4">
               {editedItems.map((lessonItem, index) => {
                 const item = lessonItem.question_solution_item_json;

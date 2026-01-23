@@ -1,15 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { FileQuestion, CheckCircle, Filter, Eye, BookOpen, X, Loader2 } from 'lucide-react';
+import { FileQuestion, CheckCircle, Filter, Eye } from 'lucide-react';
 import QuestionSetModal from '../components/QuestionSetModal';
 import SolutionSetModal from '../components/SolutionSetModal';
-import QuestionText from '../components/QuestionText';
 
 export default function LessonFoldersPage() {
-  const navigate = useNavigate();
-
   // State for filters
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
@@ -21,11 +17,6 @@ export default function LessonFoldersPage() {
   // State for modal viewing
   const [viewQuestionSet, setViewQuestionSet] = useState(null);
   const [viewSolutionSet, setViewSolutionSet] = useState(null);
-  const [createdLessons, setCreatedLessons] = useState(null);
-
-  // State for lesson name prompt
-  const [showNamePrompt, setShowNamePrompt] = useState(false);
-  const [lessonName, setLessonName] = useState('');
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -100,38 +91,6 @@ export default function LessonFoldersPage() {
     enabled: !!selectedSolutionSetId,
   });
 
-  // Create lessons mutation
-  const createLessonsMutation = useMutation({
-    mutationFn: (name) => api.post('/lessons', {
-      name,
-      question_set_id: selectedQuestionSetId,
-      solution_set_id: selectedSolutionSetId,
-    }),
-    onSuccess: () => {
-      setShowNamePrompt(false);
-      setLessonName('');
-      navigate('/lessons');
-    },
-  });
-
-  const handleCreateLessons = () => {
-    setShowNamePrompt(true);
-  };
-
-  const handleSubmitLesson = (e) => {
-    e.preventDefault();
-    if (lessonName.trim()) {
-      createLessonsMutation.mutate(lessonName.trim());
-    }
-  };
-
-  const handleCancelPrompt = () => {
-    setShowNamePrompt(false);
-    setLessonName('');
-  };
-
-  const canCreateLessons = selectedQuestionSetId && selectedSolutionSetId;
-
   const sortedQuestionSets = questionSets?.data
     ? [...questionSets.data].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     : [];
@@ -157,19 +116,9 @@ export default function LessonFoldersPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Lesson Folders</h1>
-          <p className="text-gray-500 mt-1">View questions and solutions for a lesson</p>
-        </div>
-        <button
-          onClick={handleCreateLessons}
-          disabled={!canCreateLessons}
-          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-        >
-          <BookOpen className="w-5 h-5" />
-          Create Lessons
-        </button>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">Lesson Folders</h1>
+        <p className="text-gray-500 mt-1">View questions and solutions for a lesson</p>
       </div>
 
       {/* Book/Chapter Filters */}
@@ -441,61 +390,6 @@ export default function LessonFoldersPage() {
         onClose={() => setViewSolutionSet(null)}
         solutionSet={viewSolutionSet}
       />
-
-      {/* Lesson Name Prompt Modal */}
-      {showNamePrompt && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="p-4 border-b bg-green-50">
-              <div className="flex items-center gap-3">
-                <BookOpen className="w-6 h-6 text-green-600" />
-                <h2 className="text-lg font-semibold text-gray-800">Create Lesson</h2>
-              </div>
-            </div>
-            <form onSubmit={handleSubmitLesson} className="p-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Lesson Name
-              </label>
-              <input
-                type="text"
-                value={lessonName}
-                onChange={(e) => setLessonName(e.target.value)}
-                placeholder="e.g., Chapter 3 Practice Problems"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                autoFocus
-                required
-              />
-              <div className="flex items-center gap-3 mt-4">
-                <button
-                  type="submit"
-                  disabled={!lessonName.trim() || createLessonsMutation.isPending}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                >
-                  {createLessonsMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <BookOpen className="w-4 h-4" />
-                      Create
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancelPrompt}
-                  disabled={createLessonsMutation.isPending}
-                  className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:bg-gray-100 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

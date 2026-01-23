@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BookOpen, Filter, Eye, Trash2, Calendar, FileQuestion, CheckCircle } from 'lucide-react';
+import { BookOpen, Filter, Eye, Trash2, Calendar, FileQuestion, CheckCircle, Plus, FolderOpen, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import LessonModal from '../components/LessonModal';
+import PrepareLessonModal from '../components/PrepareLessonModal';
 
 export default function LessonsPage() {
   const queryClient = useQueryClient();
@@ -13,6 +14,12 @@ export default function LessonsPage() {
 
   // State for viewing/editing
   const [viewingLesson, setViewingLesson] = useState(null);
+  const [showPrepareModal, setShowPrepareModal] = useState(false);
+
+  // State for folder creation modal
+  const [folderModalLesson, setFolderModalLesson] = useState(null);
+  const [folderPath, setFolderPath] = useState('');
+  const [folderResult, setFolderResult] = useState(null);
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -63,6 +70,18 @@ export default function LessonsPage() {
     },
   });
 
+  // Create folders mutation
+  const createFoldersMutation = useMutation({
+    mutationFn: ({ lessonId, basePath }) =>
+      api.post(`/lessons/${lessonId}/create-folders`, { basePath }),
+    onSuccess: (response) => {
+      setFolderResult({ success: true, data: response.data });
+    },
+    onError: (error) => {
+      setFolderResult({ success: false, error: error.response?.data?.error || error.message });
+    },
+  });
+
   const handleDelete = (id, name) => {
     if (window.confirm(`Are you sure you want to delete the lesson "${name}"?`)) {
       deleteLessonMutation.mutate(id);
@@ -80,9 +99,18 @@ export default function LessonsPage() {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Lessons</h1>
-        <p className="text-gray-500 mt-1">View and manage your saved lessons</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Lessons</h1>
+          <p className="text-gray-500 mt-1">View and manage your saved lessons</p>
+        </div>
+        <button
+          onClick={() => setShowPrepareModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        >
+          <Plus className="w-5 h-5" />
+          Prepare Lesson
+        </button>
       </div>
 
       {/* Book/Chapter Filters */}
@@ -232,6 +260,17 @@ export default function LessonsPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            setFolderModalLesson(lesson);
+                            setFolderPath('');
+                          }}
+                          className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg"
+                          title="Create Folders"
+                        >
+                          <FolderOpen className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             handleDelete(lesson.id, lesson.name);
                           }}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
@@ -255,6 +294,138 @@ export default function LessonsPage() {
           lesson={viewingLesson}
           onClose={() => setViewingLesson(null)}
         />
+      )}
+
+      {/* Prepare Lesson Modal */}
+      <PrepareLessonModal
+        isOpen={showPrepareModal}
+        onClose={() => setShowPrepareModal(false)}
+      />
+
+      {/* Create Folders Modal */}
+      {folderModalLesson && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b bg-orange-50">
+              <div className="flex items-center gap-3">
+                <FolderOpen className="w-6 h-6 text-orange-600" />
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-800">Create Folders</h2>
+                  <p className="text-sm text-gray-500">{folderModalLesson.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setFolderModalLesson(null);
+                  setFolderPath('');
+                  setFolderResult(null);
+                  createFoldersMutation.reset();
+                }}
+                className="p-2 hover:bg-orange-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4">
+              {/* Show result if available */}
+              {folderResult ? (
+                folderResult.success ? (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-green-700 mb-2">
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span className="font-medium">Folders Created Successfully</span>
+                    </div>
+                    <div className="text-sm text-green-600 space-y-1">
+                      <p><strong>Location:</strong> {folderResult.data.lessonFolder}</p>
+                      <p><strong>Total folders:</strong> {folderResult.data.totalFolders}</p>
+                    </div>
+                    {folderResult.data.itemFolders?.length > 0 && (
+                      <div className="mt-3 max-h-40 overflow-auto">
+                        <p className="text-xs font-medium text-green-700 mb-1">Created folders:</p>
+                        <ul className="text-xs text-green-600 space-y-0.5">
+                          {folderResult.data.itemFolders.map((folder, idx) => (
+                            <li key={idx} className="flex items-center gap-1">
+                              <FolderOpen className="w-3 h-3" />
+                              {folder.folder}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-red-700 mb-2">
+                      <AlertCircle className="w-5 h-5" />
+                      <span className="font-medium">Failed to Create Folders</span>
+                    </div>
+                    <p className="text-sm text-red-600">{folderResult.error}</p>
+                  </div>
+                )
+              ) : (
+                <>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Folder Path
+                  </label>
+                  <input
+                    type="text"
+                    value={folderPath}
+                    onChange={(e) => setFolderPath(e.target.value)}
+                    placeholder="e.g., /path/to/destination"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    autoFocus
+                    disabled={createFoldersMutation.isPending}
+                  />
+                  <p className="mt-2 text-xs text-gray-500">
+                    Enter the destination path where folders will be created
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 p-4 border-t bg-gray-50">
+              <button
+                onClick={() => {
+                  setFolderModalLesson(null);
+                  setFolderPath('');
+                  setFolderResult(null);
+                  createFoldersMutation.reset();
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                {folderResult ? 'Close' : 'Cancel'}
+              </button>
+              {!folderResult && (
+                <button
+                  onClick={() => {
+                    createFoldersMutation.mutate({
+                      lessonId: folderModalLesson.id,
+                      basePath: folderPath.trim(),
+                    });
+                  }}
+                  disabled={!folderPath.trim() || createFoldersMutation.isPending}
+                  className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                  {createFoldersMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <FolderOpen className="w-4 h-4" />
+                      Create Folders
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { supabase } from '../config/database.js';
 import { questionExtractionService } from './questionExtraction.service.js';
 import { solutionExtractionService } from './solutionExtraction.service.js';
+import { generateMongoId } from '../utils/mongoId.js';
 
 export const lessonsService = {
   /**
@@ -15,7 +16,7 @@ export const lessonsService = {
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
         solution_set:solution_sets(id, name),
-        lesson_items(id, question_label, problem_statement, solution_context, question_solution_item_json, position)
+        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position)
       `)
       .order('created_at', { ascending: false });
 
@@ -55,7 +56,7 @@ export const lessonsService = {
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
         solution_set:solution_sets(id, name),
-        lesson_items(id, question_label, problem_statement, solution_context, question_solution_item_json, position)
+        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position)
       `)
       .eq('id', id)
       .single();
@@ -76,9 +77,10 @@ export const lessonsService = {
   },
 
   /**
-   * Create a new lesson by merging question set and solution set
+   * Prepare lesson data by merging question set and solution set (without creating)
+   * Returns the merged JSON for preview/verification
    */
-  async create({ name, question_set_id, solution_set_id }) {
+  async prepare({ question_set_id, solution_set_id }) {
     // Fetch question set
     const questionSet = await questionExtractionService.findById(question_set_id);
     if (!questionSet) {
@@ -121,6 +123,7 @@ export const lessonsService = {
         question_label: question.question_label,
         text: question.text,
         choices: question.choices || [],
+        has_solution: !!matchingSolution,
       };
 
       // Add solution fields if matching solution exists
@@ -138,6 +141,114 @@ export const lessonsService = {
 
       return item;
     });
+
+    // Count matched vs unmatched
+    const matchedCount = mergedItems.filter(item => item.has_solution).length;
+    const unmatchedCount = mergedItems.length - matchedCount;
+
+    return {
+      question_set_id,
+      solution_set_id,
+      book_id: questionSet.book_id,
+      chapter_id: questionSet.chapter_id,
+      question_set: {
+        id: questionSet.id,
+        name: questionSet.name,
+      },
+      solution_set: {
+        id: solutionSet.id,
+        name: solutionSet.name,
+      },
+      book: questionSet.book,
+      chapter: questionSet.chapter,
+      summary: {
+        total_questions: questions.length,
+        total_solutions: solutions.length,
+        matched: matchedCount,
+        unmatched: unmatchedCount,
+      },
+      items: mergedItems,
+    };
+  },
+
+  /**
+   * Create a new lesson by merging question set and solution set
+   * If `items` array is provided, use those directly (for edited/custom items)
+   */
+  async create({ name, question_set_id, solution_set_id, items: providedItems }) {
+    // Fetch question set
+    const questionSet = await questionExtractionService.findById(question_set_id);
+    if (!questionSet) {
+      throw new Error('Question set not found');
+    }
+
+    // Fetch solution set
+    const solutionSet = await solutionExtractionService.findById(solution_set_id);
+    if (!solutionSet) {
+      throw new Error('Solution set not found');
+    }
+
+    // Validate that both sets belong to the same book and chapter
+    if (questionSet.book_id !== solutionSet.book_id) {
+      throw new Error('Question set and solution set must belong to the same book');
+    }
+
+    if (questionSet.chapter_id !== solutionSet.chapter_id) {
+      throw new Error('Question set and solution set must belong to the same chapter');
+    }
+
+    let mergedItems;
+
+    // If items are provided directly (edited by user), use those
+    if (providedItems && Array.isArray(providedItems) && providedItems.length > 0) {
+      mergedItems = providedItems.map(item => ({
+        question_label: item.question_label,
+        text: item.text,
+        choices: item.choices || [],
+        answer_key: item.answer_key,
+        worked_solution: item.worked_solution,
+        explanation: item.explanation,
+      }));
+    } else {
+      // Otherwise, merge from question and solution sets
+      const questions = questionSet.questions?.questions || [];
+      const solutions = solutionSet.solutions?.solutions || [];
+
+      // Create a map of solutions by question_label for quick lookup
+      const solutionsMap = new Map();
+      solutions.forEach((solution) => {
+        if (solution.question_label) {
+          solutionsMap.set(String(solution.question_label), solution);
+        }
+      });
+
+      // Merge questions with solutions based on question_label
+      mergedItems = questions.map((question) => {
+        const questionLabel = String(question.question_label || '');
+        const matchingSolution = solutionsMap.get(questionLabel);
+
+        const item = {
+          question_label: question.question_label,
+          text: question.text,
+          choices: question.choices || [],
+        };
+
+        // Add solution fields if matching solution exists
+        if (matchingSolution) {
+          if (matchingSolution.answer_key) {
+            item.answer_key = matchingSolution.answer_key;
+          }
+          if (matchingSolution.worked_solution) {
+            item.worked_solution = matchingSolution.worked_solution;
+          }
+          if (matchingSolution.explanation) {
+            item.explanation = matchingSolution.explanation;
+          }
+        }
+
+        return item;
+      });
+    }
 
     // Create the lesson record
     const { data: lesson, error: lessonError } = await supabase
@@ -178,6 +289,7 @@ export const lessonsService = {
         solution_context: solutionContext,
         question_solution_item_json: item,
         position: index,
+        ref_id: generateMongoId(),
       };
     });
 
