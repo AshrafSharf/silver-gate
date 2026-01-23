@@ -55,9 +55,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, data: lesson });
 }));
 
-// Create a new lesson
+// Create a new lesson (or multiple lessons if lesson_item_count is provided)
 router.post('/', asyncHandler(async (req, res) => {
-  const { name, question_set_id, solution_set_id, items } = req.body;
+  const { name, common_parent_section_name, lesson_item_count, question_set_id, solution_set_id, items } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({
@@ -81,14 +81,16 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 
   try {
-    const lesson = await lessonsService.create({
+    const lessons = await lessonsService.create({
       name: name.trim(),
+      common_parent_section_name: common_parent_section_name?.trim() || null,
+      lesson_item_count: lesson_item_count ? parseInt(lesson_item_count, 10) : null,
       question_set_id,
       solution_set_id,
       items, // Optional: pre-edited items from the prepare modal
     });
 
-    res.status(201).json({ success: true, data: lesson });
+    res.status(201).json({ success: true, data: lessons });
   } catch (error) {
     return res.status(400).json({
       success: false,
@@ -130,9 +132,9 @@ router.put('/:lessonId/items/:itemId', asyncHandler(async (req, res) => {
   res.json({ success: true, data: item });
 }));
 
-// Create folders for a lesson
-router.post('/:id/create-folders', asyncHandler(async (req, res) => {
-  const { basePath } = req.body;
+// Create folders for multiple lessons (all items directly in basePath)
+router.post('/create-folders', asyncHandler(async (req, res) => {
+  const { lessonIds, basePath } = req.body;
 
   if (!basePath || !basePath.trim()) {
     return res.status(400).json({
@@ -141,65 +143,94 @@ router.post('/:id/create-folders', asyncHandler(async (req, res) => {
     });
   }
 
-  // Get the lesson with its items
-  const lesson = await lessonsService.findById(req.params.id);
-  if (!lesson) {
-    return res.status(404).json({ success: false, error: 'Lesson not found' });
+  if (!lessonIds || !Array.isArray(lessonIds) || lessonIds.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'lessonIds array is required',
+    });
   }
 
   try {
-    // Sanitize lesson name for folder name (remove special characters)
-    const sanitizedLessonName = lesson.name.replace(/[<>:"/\\|?*]/g, '_').trim();
-    const lessonFolderPath = path.join(basePath.trim(), sanitizedLessonName);
-
-    // Create the main lesson folder
-    await fs.mkdir(lessonFolderPath, { recursive: true });
-
+    const trimmedBasePath = basePath.trim();
     const createdFolders = [];
+    const lessonsSummary = [];
 
-    // Create folders for each lesson item
-    for (const item of lesson.lesson_items || []) {
-      const questionLabel = item.question_label || item.position || 'unknown';
-      const itemFolderName = `question_${questionLabel}`;
-      const itemFolderPath = path.join(lessonFolderPath, itemFolderName);
+    // Create the base folder
+    await fs.mkdir(trimmedBasePath, { recursive: true });
 
-      // Create the item folder
-      await fs.mkdir(itemFolderPath, { recursive: true });
+    // Process each lesson and collect all items
+    for (const lessonId of lessonIds) {
+      const lesson = await lessonsService.findById(lessonId);
+      if (!lesson) {
+        lessonsSummary.push({
+          lessonId,
+          lessonName: null,
+          success: false,
+          error: 'Lesson not found',
+          itemsCreated: 0,
+        });
+        continue;
+      }
 
-      // Create empty.txt with the lesson_item's ref_id
-      await fs.writeFile(
-        path.join(itemFolderPath, 'empty.txt'),
-        item.ref_id || '',
-        'utf-8'
-      );
+      let itemsCreated = 0;
 
-      // Create problem_statement.txt with the problem_statement field
-      await fs.writeFile(
-        path.join(itemFolderPath, 'problem_statement.txt'),
-        item.problem_statement || '',
-        'utf-8'
-      );
+      // Create folders for each lesson item directly in basePath
+      for (const item of lesson.lesson_items || []) {
+        const questionLabel = item.question_label || item.position || 'unknown';
+        const itemFolderName = `question_${questionLabel}`;
+        const itemFolderPath = path.join(trimmedBasePath, itemFolderName);
 
-      // Create solution_context.txt with the solution_context field
-      await fs.writeFile(
-        path.join(itemFolderPath, 'solution_context.txt'),
-        item.solution_context || '',
-        'utf-8'
-      );
+        // Create the item folder
+        await fs.mkdir(itemFolderPath, { recursive: true });
 
-      createdFolders.push({
-        folder: itemFolderName,
-        path: itemFolderPath,
-        files: ['empty.txt', 'problem_statement.txt', 'solution_context.txt'],
+        // Create empty.txt with the lesson_item's ref_id
+        await fs.writeFile(
+          path.join(itemFolderPath, 'empty.txt'),
+          item.ref_id || '',
+          'utf-8'
+        );
+
+        // Create problem_statement.txt with the problem_statement field
+        await fs.writeFile(
+          path.join(itemFolderPath, 'problem_statement.txt'),
+          item.problem_statement || '',
+          'utf-8'
+        );
+
+        // Create solution_context.txt with the solution_context field
+        await fs.writeFile(
+          path.join(itemFolderPath, 'solution_context.txt'),
+          item.solution_context || '',
+          'utf-8'
+        );
+
+        createdFolders.push({
+          folder: itemFolderName,
+          path: itemFolderPath,
+          questionLabel,
+          lessonName: lesson.name,
+          files: ['empty.txt', 'problem_statement.txt', 'solution_context.txt'],
+        });
+
+        itemsCreated++;
+      }
+
+      lessonsSummary.push({
+        lessonId,
+        lessonName: lesson.name,
+        success: true,
+        itemsCreated,
       });
     }
 
     res.json({
       success: true,
       data: {
-        lessonFolder: lessonFolderPath,
-        itemFolders: createdFolders,
-        totalFolders: createdFolders.length,
+        basePath: trimmedBasePath,
+        lessonsProcessed: lessonsSummary.length,
+        totalFoldersCreated: createdFolders.length,
+        lessonsSummary,
+        createdFolders,
       },
     });
   } catch (error) {

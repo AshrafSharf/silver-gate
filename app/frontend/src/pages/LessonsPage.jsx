@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BookOpen, Filter, Eye, Trash2, Calendar, FileQuestion, CheckCircle, Plus, FolderOpen, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { BookOpen, Filter, Eye, Trash2, Calendar, FileQuestion, CheckCircle, Plus, FolderOpen, X, Loader2, CheckCircle2, AlertCircle, Square, CheckSquare } from 'lucide-react';
 import LessonModal from '../components/LessonModal';
 import PrepareLessonModal from '../components/PrepareLessonModal';
 
@@ -16,8 +16,11 @@ export default function LessonsPage() {
   const [viewingLesson, setViewingLesson] = useState(null);
   const [showPrepareModal, setShowPrepareModal] = useState(false);
 
-  // State for folder creation modal
-  const [folderModalLesson, setFolderModalLesson] = useState(null);
+  // State for multi-selection
+  const [selectedLessonIds, setSelectedLessonIds] = useState(new Set());
+
+  // State for folder creation modal (now for multiple lessons)
+  const [showFolderModal, setShowFolderModal] = useState(false);
   const [folderPath, setFolderPath] = useState('');
   const [folderResult, setFolderResult] = useState(null);
 
@@ -70,17 +73,45 @@ export default function LessonsPage() {
     },
   });
 
-  // Create folders mutation
+  // Create folders mutation (now handles multiple lessons)
   const createFoldersMutation = useMutation({
-    mutationFn: ({ lessonId, basePath }) =>
-      api.post(`/lessons/${lessonId}/create-folders`, { basePath }),
+    mutationFn: ({ lessonIds, basePath }) =>
+      api.post('/lessons/create-folders', { lessonIds, basePath }),
     onSuccess: (response) => {
       setFolderResult({ success: true, data: response.data });
+      setSelectedLessonIds(new Set()); // Clear selection after success
     },
     onError: (error) => {
       setFolderResult({ success: false, error: error.response?.data?.error || error.message });
     },
   });
+
+  // Selection handlers
+  const handleSelectLesson = (lessonId, e) => {
+    e.stopPropagation();
+    setSelectedLessonIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(lessonId)) {
+        newSet.delete(lessonId);
+      } else {
+        newSet.add(lessonId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedLessonIds.size === sortedLessons.length) {
+      setSelectedLessonIds(new Set());
+    } else {
+      setSelectedLessonIds(new Set(sortedLessons.map(l => l.id)));
+    }
+  };
+
+  // Reset selection when filters change
+  useEffect(() => {
+    setSelectedLessonIds(new Set());
+  }, [selectedBookId, selectedChapterId]);
 
   const handleDelete = (id, name) => {
     if (window.confirm(`Are you sure you want to delete the lesson "${name}"?`)) {
@@ -104,13 +135,32 @@ export default function LessonsPage() {
           <h1 className="text-2xl font-bold text-gray-800">Lessons</h1>
           <p className="text-gray-500 mt-1">View and manage your saved lessons</p>
         </div>
-        <button
-          onClick={() => setShowPrepareModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          Prepare Lesson
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowPrepareModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            Prepare Lesson
+          </button>
+          <button
+            onClick={() => {
+              setShowFolderModal(true);
+              setFolderPath('');
+              setFolderResult(null);
+            }}
+            disabled={selectedLessonIds.size === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            <FolderOpen className="w-5 h-5" />
+            Create Folders
+            {selectedLessonIds.size > 0 && (
+              <span className="bg-orange-800 text-white text-xs px-2 py-0.5 rounded-full">
+                {selectedLessonIds.size}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Book/Chapter Filters */}
@@ -178,6 +228,19 @@ export default function LessonsPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 text-left">
+                    <button
+                      onClick={handleSelectAll}
+                      className="p-1 hover:bg-gray-200 rounded transition-colors"
+                      title={selectedLessonIds.size === sortedLessons.length ? 'Deselect all' : 'Select all'}
+                    >
+                      {selectedLessonIds.size === sortedLessons.length && sortedLessons.length > 0 ? (
+                        <CheckSquare className="w-5 h-5 text-orange-600" />
+                      ) : (
+                        <Square className="w-5 h-5 text-gray-400" />
+                      )}
+                    </button>
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
@@ -202,9 +265,21 @@ export default function LessonsPage() {
                 {sortedLessons.map((lesson) => (
                   <tr
                     key={lesson.id}
-                    className="hover:bg-gray-50 cursor-pointer"
+                    className={`hover:bg-gray-50 cursor-pointer ${selectedLessonIds.has(lesson.id) ? 'bg-orange-50' : ''}`}
                     onClick={() => setViewingLesson(lesson)}
                   >
+                    <td className="px-4 py-4">
+                      <button
+                        onClick={(e) => handleSelectLesson(lesson.id, e)}
+                        className="p-1 hover:bg-gray-200 rounded transition-colors"
+                      >
+                        {selectedLessonIds.has(lesson.id) ? (
+                          <CheckSquare className="w-5 h-5 text-orange-600" />
+                        ) : (
+                          <Square className="w-5 h-5 text-gray-400" />
+                        )}
+                      </button>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <BookOpen className="w-5 h-5 text-green-500 mr-3" />
@@ -260,17 +335,6 @@ export default function LessonsPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setFolderModalLesson(lesson);
-                            setFolderPath('');
-                          }}
-                          className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg"
-                          title="Create Folders"
-                        >
-                          <FolderOpen className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
                             handleDelete(lesson.id, lesson.name);
                           }}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
@@ -302,22 +366,22 @@ export default function LessonsPage() {
         onClose={() => setShowPrepareModal(false)}
       />
 
-      {/* Create Folders Modal */}
-      {folderModalLesson && (
+      {/* Create Folders Modal (for multiple lessons) */}
+      {showFolderModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b bg-orange-50">
               <div className="flex items-center gap-3">
                 <FolderOpen className="w-6 h-6 text-orange-600" />
                 <div>
                   <h2 className="text-lg font-semibold text-gray-800">Create Folders</h2>
-                  <p className="text-sm text-gray-500">{folderModalLesson.name}</p>
+                  <p className="text-sm text-gray-500">{selectedLessonIds.size} lesson(s) selected</p>
                 </div>
               </div>
               <button
                 onClick={() => {
-                  setFolderModalLesson(null);
+                  setShowFolderModal(false);
                   setFolderPath('');
                   setFolderResult(null);
                   createFoldersMutation.reset();
@@ -339,20 +403,37 @@ export default function LessonsPage() {
                       <span className="font-medium">Folders Created Successfully</span>
                     </div>
                     <div className="text-sm text-green-600 space-y-1">
-                      <p><strong>Location:</strong> {folderResult.data.lessonFolder}</p>
-                      <p><strong>Total folders:</strong> {folderResult.data.totalFolders}</p>
+                      <p><strong>Base path:</strong> {folderResult.data.basePath}</p>
+                      <p><strong>Lessons processed:</strong> {folderResult.data.lessonsProcessed}</p>
+                      <p><strong>Total question folders:</strong> {folderResult.data.totalFoldersCreated}</p>
                     </div>
-                    {folderResult.data.itemFolders?.length > 0 && (
-                      <div className="mt-3 max-h-40 overflow-auto">
-                        <p className="text-xs font-medium text-green-700 mb-1">Created folders:</p>
-                        <ul className="text-xs text-green-600 space-y-0.5">
-                          {folderResult.data.itemFolders.map((folder, idx) => (
-                            <li key={idx} className="flex items-center gap-1">
-                              <FolderOpen className="w-3 h-3" />
-                              {folder.folder}
-                            </li>
+                    {folderResult.data.lessonsSummary?.length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-xs font-medium text-green-700 mb-2">Lessons summary:</p>
+                        <div className="space-y-1">
+                          {folderResult.data.lessonsSummary.map((lesson, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs bg-white rounded px-2 py-1 border border-green-100">
+                              <div className="flex items-center gap-1 text-green-800">
+                                <BookOpen className="w-3 h-3" />
+                                <span>{lesson.lessonName || 'Unknown'}</span>
+                              </div>
+                              <span className="text-green-600">{lesson.itemsCreated} items</span>
+                            </div>
                           ))}
-                        </ul>
+                        </div>
+                      </div>
+                    )}
+                    {folderResult.data.createdFolders?.length > 0 && (
+                      <div className="mt-3 max-h-40 overflow-auto">
+                        <p className="text-xs font-medium text-green-700 mb-2">Created folders:</p>
+                        <div className="space-y-0.5">
+                          {folderResult.data.createdFolders.map((folder, idx) => (
+                            <div key={idx} className="flex items-center gap-1 text-xs text-green-600">
+                              <FolderOpen className="w-3 h-3" />
+                              <span>{folder.folder}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -367,8 +448,26 @@ export default function LessonsPage() {
                 )
               ) : (
                 <>
+                  {/* Selected lessons preview */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Selected Lessons
+                    </label>
+                    <div className="max-h-32 overflow-auto bg-gray-50 rounded-lg p-2 space-y-1">
+                      {sortedLessons
+                        .filter(l => selectedLessonIds.has(l.id))
+                        .map(lesson => (
+                          <div key={lesson.id} className="flex items-center gap-2 text-sm text-gray-700">
+                            <BookOpen className="w-4 h-4 text-green-500" />
+                            <span>{lesson.name}</span>
+                            <span className="text-xs text-gray-400">({lesson.lesson_items?.length || 0} items)</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Folder Path
+                    Base Folder Path
                   </label>
                   <input
                     type="text"
@@ -380,7 +479,7 @@ export default function LessonsPage() {
                     disabled={createFoldersMutation.isPending}
                   />
                   <p className="mt-2 text-xs text-gray-500">
-                    Enter the destination path where folders will be created
+                    All question folders from selected lessons will be created directly in this path
                   </p>
                 </>
               )}
@@ -390,7 +489,7 @@ export default function LessonsPage() {
             <div className="flex items-center justify-end gap-3 p-4 border-t bg-gray-50">
               <button
                 onClick={() => {
-                  setFolderModalLesson(null);
+                  setShowFolderModal(false);
                   setFolderPath('');
                   setFolderResult(null);
                   createFoldersMutation.reset();
@@ -403,7 +502,7 @@ export default function LessonsPage() {
                 <button
                   onClick={() => {
                     createFoldersMutation.mutate({
-                      lessonId: folderModalLesson.id,
+                      lessonIds: Array.from(selectedLessonIds),
                       basePath: folderPath.trim(),
                     });
                   }}
@@ -418,7 +517,7 @@ export default function LessonsPage() {
                   ) : (
                     <>
                       <FolderOpen className="w-4 h-4" />
-                      Create Folders
+                      Proceed
                     </>
                   )}
                 </button>

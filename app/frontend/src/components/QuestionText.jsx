@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { preprocessMathWithLatex } from '../lib/katexProcessor';
 import { isNeededExtraLineHeight } from '../lib/katexLineHeight';
 import 'katex/dist/katex.min.css';
@@ -8,11 +8,12 @@ import 'katex/dist/katex.min.css';
  *
  * Renders text containing LaTeX math expressions ($...$) using KaTeX.
  * Automatically detects tall math elements and applies extra line height.
+ * Wrapped with React.memo to prevent re-renders when props haven't changed.
  *
  * @param {string} text - The question text to display (may contain $...$ LaTeX)
  * @param {string} className - Additional CSS classes
  */
-export default function QuestionText({ text, className = '' }) {
+function QuestionText({ text, className = '' }) {
   const processedContent = useMemo(() => {
     return preprocessMathWithLatex(text);
   }, [text]);
@@ -32,3 +33,5 @@ export default function QuestionText({ text, className = '' }) {
     />
   );
 }
+
+export default memo(QuestionText);

@@ -172,10 +172,11 @@ export const lessonsService = {
   },
 
   /**
-   * Create a new lesson by merging question set and solution set
+   * Create a new lesson (or multiple lessons if lesson_item_count is provided)
    * If `items` array is provided, use those directly (for edited/custom items)
+   * If `lesson_item_count` is provided, split items into chunks and create multiple lessons
    */
-  async create({ name, question_set_id, solution_set_id, items: providedItems }) {
+  async create({ name, common_parent_section_name, lesson_item_count, question_set_id, solution_set_id, items: providedItems }) {
     // Fetch question set
     const questionSet = await questionExtractionService.findById(question_set_id);
     if (!questionSet) {
@@ -250,60 +251,161 @@ export const lessonsService = {
       });
     }
 
-    // Create the lesson record
-    const { data: lesson, error: lessonError } = await supabase
-      .from('lessons')
-      .insert({
-        name,
-        book_id: questionSet.book_id,
-        chapter_id: questionSet.chapter_id,
-        question_set_id,
-        solution_set_id,
-      })
-      .select()
-      .single();
-
-    if (lessonError) throw lessonError;
-
-    // Create lesson_items for each merged item
-    const lessonItems = mergedItems.map((item, index) => {
-      // Build problem_statement: question text + choices
-      let problemStatement = item.text || '';
+    // Helper function to build question text (combining text + choices) for problem_statement
+    const buildQuestionText = (item) => {
+      let questionText = item.text || '';
       if (item.choices && item.choices.length > 0) {
-        problemStatement += '\n\n' + item.choices.join('\n');
+        questionText += ' $\\\\$ ' + item.choices.join(' $\\hspace{2em}$');
+      }
+      return questionText;
+    };
+
+    // Helper function to extract choice label from choice text
+    // Handles formats like "$(a)$ text", "(a) text", etc.
+    const extractChoiceLabel = (choiceText, fallbackIndex) => {
+      // Try to match patterns like $(a)$, (a), (A), etc.
+      const patterns = [
+        /^\$\(([a-zA-Z])\)\$\s*/,      // $(a)$ format
+        /^\(([a-zA-Z])\)\s*/,          // (a) format
+        /^\$([a-zA-Z])\$\s*/,          // $a$ format
+        /^([a-zA-Z])\.\s*/,            // a. format
+        /^([a-zA-Z])\)\s*/,            // a) format
+      ];
+
+      for (const pattern of patterns) {
+        const match = choiceText.match(pattern);
+        if (match && match[1]) {
+          return match[1].toLowerCase();
+        }
       }
 
-      // Build solution_context: answer_key + worked_solution
-      let solutionContext = '';
-      if (item.answer_key) {
-        solutionContext = `Answer: ${item.answer_key}`;
-      }
-      if (item.worked_solution) {
-        solutionContext += (solutionContext ? '\n\n' : '') + item.worked_solution;
-      }
+      // Fallback to letter based on index
+      return String.fromCharCode(97 + fallbackIndex); // 'a', 'b', 'c', 'd'
+    };
 
-      return {
-        lesson_id: lesson.id,
-        question_label: item.question_label,
-        problem_statement: problemStatement,
-        solution_context: solutionContext,
-        question_solution_item_json: item,
-        position: index,
-        ref_id: generateMongoId(),
+    // Helper function to clean choice text (remove the label prefix)
+    const cleanChoiceText = (choiceText) => {
+      // Remove common label patterns from the beginning
+      return choiceText
+        .replace(/^\$\([a-zA-Z]\)\$\s*/, '')   // $(a)$ format
+        .replace(/^\([a-zA-Z]\)\s*/, '')       // (a) format
+        .replace(/^\$[a-zA-Z]\$\s*/, '')       // $a$ format
+        .replace(/^[a-zA-Z]\.\s*/, '')         // a. format
+        .replace(/^[a-zA-Z]\)\s*/, '')         // a) format
+        .trim();
+    };
+
+    // Helper function to create a single lesson with its items
+    const createSingleLesson = async (lessonName, lessonItems) => {
+      // Generate toc_output_json from lesson items
+      const tocQuestionItems = lessonItems.map((item, index) => {
+        const questionId = String(index + 1);
+        const baseItem = {
+          id: questionId,
+          question: item.text || '',
+          question_label: String(item.question_label || questionId),
+        };
+
+        // If item has choices, add choices array; otherwise add sub_questions
+        if (item.choices && item.choices.length > 0) {
+          baseItem.choices = item.choices.map((choice, choiceIndex) => ({
+            id: `${questionId}.${choiceIndex + 1}`,
+            question: cleanChoiceText(choice),
+            question_label: extractChoiceLabel(choice, choiceIndex),
+          }));
+        } else {
+          baseItem.sub_questions = [];
+        }
+
+        return baseItem;
+      });
+
+      const tocOutputJson = {
+        toc_question_items: tocQuestionItems,
       };
-    });
 
-    // Insert all lesson_items
-    if (lessonItems.length > 0) {
-      const { error: itemsError } = await supabase
-        .from('lesson_items')
-        .insert(lessonItems);
+      // Create the lesson record
+      const { data: lesson, error: lessonError } = await supabase
+        .from('lessons')
+        .insert({
+          name: lessonName,
+          common_parent_section_name,
+          book_id: questionSet.book_id,
+          chapter_id: questionSet.chapter_id,
+          question_set_id,
+          solution_set_id,
+          toc_output_json: tocOutputJson,
+        })
+        .select()
+        .single();
 
-      if (itemsError) throw itemsError;
+      if (lessonError) throw lessonError;
+
+      // Create lesson_items for each item
+      const lessonItemRecords = lessonItems.map((item, index) => {
+        let problemStatement = item.text || '';
+        if (item.choices && item.choices.length > 0) {
+          problemStatement += ' $\\\\$ ' + item.choices.join(' $\\hspace{2em}$');
+        }
+
+        let solutionContext = '';
+        if (item.answer_key) {
+          solutionContext = `Answer: ${item.answer_key}`;
+        }
+        if (item.worked_solution) {
+          solutionContext += (solutionContext ? '\n\n' : '') + item.worked_solution;
+        }
+
+        return {
+          lesson_id: lesson.id,
+          question_label: item.question_label,
+          problem_statement: problemStatement,
+          solution_context: solutionContext,
+          question_solution_item_json: item,
+          position: index,
+          ref_id: generateMongoId(),
+        };
+      });
+
+      if (lessonItemRecords.length > 0) {
+        const { error: itemsError } = await supabase
+          .from('lesson_items')
+          .insert(lessonItemRecords);
+
+        if (itemsError) throw itemsError;
+      }
+
+      return lesson.id;
+    };
+
+    // If lesson_item_count is not provided, create a single lesson with all items
+    if (!lesson_item_count || lesson_item_count <= 0) {
+      const lessonId = await createSingleLesson(name, mergedItems);
+      return await this.findById(lessonId);
     }
 
-    // Fetch and return the complete lesson with items
-    return await this.findById(lesson.id);
+    // Split items into chunks and create multiple lessons
+    const createdLessonIds = [];
+    const totalItems = mergedItems.length;
+
+    for (let i = 0; i < totalItems; i += lesson_item_count) {
+      const chunkItems = mergedItems.slice(i, i + lesson_item_count);
+      const startNum = i + 1;
+      const endNum = Math.min(i + lesson_item_count, totalItems);
+
+      // Generate lesson name with range appended
+      const lessonNameWithRange = `${name} ${startNum}-${endNum}`;
+
+      const lessonId = await createSingleLesson(lessonNameWithRange, chunkItems);
+      createdLessonIds.push(lessonId);
+    }
+
+    // Fetch and return all created lessons
+    const createdLessons = await Promise.all(
+      createdLessonIds.map(id => this.findById(id))
+    );
+
+    return createdLessons;
   },
 
   /**
@@ -343,9 +445,11 @@ export const lessonsService = {
       const item = updateData.question_solution_item_json;
 
       // Build problem_statement
+      // Uses LaTeX line break ($\\\\$) between text and choices
+      // Uses LaTeX horizontal space ($\hspace{2em}$) between each choice
       let problemStatement = item.text || '';
       if (item.choices && item.choices.length > 0) {
-        problemStatement += '\n\n' + item.choices.join('\n');
+        problemStatement += ' $\\\\$ ' + item.choices.join(' $\\hspace{2em}$');
       }
       updates.problem_statement = problemStatement;
 

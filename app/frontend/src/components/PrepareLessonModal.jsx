@@ -1,10 +1,255 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { BookOpen, X, Filter, FileQuestion, CheckCircle, Eye, Loader2, Code, Edit3, Save, Plus, Minus, CheckCheck, AlertCircle } from 'lucide-react';
 import QuestionSetModal from './QuestionSetModal';
 import SolutionSetModal from './SolutionSetModal';
 import QuestionText from './QuestionText';
+
+// Memoized component for a single item in view mode
+const ItemViewMode = memo(function ItemViewMode({ item, index, onEdit }) {
+  return (
+    <>
+      <div className="flex items-start justify-between mb-2">
+        <span className="text-sm font-bold text-gray-700">
+          Q{item.question_label || index + 1}
+        </span>
+        <div className="flex items-center gap-2">
+          {item.has_solution ? (
+            <span className="flex items-center gap-1 text-xs text-green-600">
+              <CheckCheck className="w-4 h-4" />
+              Solution matched
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-xs text-orange-600">
+              <AlertCircle className="w-4 h-4" />
+              No solution
+            </span>
+          )}
+          <button
+            onClick={onEdit}
+            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            title="Edit"
+          >
+            <Edit3 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Question */}
+      <div className="mb-3">
+        <QuestionText text={item.text || ''} className="text-sm" />
+        {item.choices && item.choices.length > 0 && (
+          <div className="mt-2 pl-4 space-y-1">
+            {item.choices.map((choice, i) => (
+              <QuestionText key={i} text={choice} className="text-sm text-gray-600" />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Solution */}
+      {(item.answer_key || item.worked_solution || item.explanation) && (
+        <div className="border-t border-green-200 pt-3 mt-3">
+          {item.answer_key && (
+            <div className="text-sm">
+              <span className="font-medium text-green-700">Answer:</span>{' '}
+              <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded font-bold">
+                {item.answer_key}
+              </span>
+            </div>
+          )}
+          {item.worked_solution && (
+            <div className="mt-2">
+              <span className="text-sm font-medium text-green-700">Solution:</span>
+              <QuestionText text={item.worked_solution} className="text-sm text-gray-700 mt-1" />
+            </div>
+          )}
+          {item.explanation && (
+            <div className="mt-2">
+              <span className="text-sm font-medium text-green-700">Explanation:</span>
+              <QuestionText text={item.explanation} className="text-sm text-gray-700 mt-1" />
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+});
+
+// Memoized component for the items list
+const ItemsList = memo(function ItemsList({
+  editedItems,
+  editingItemIndex,
+  showJsonView,
+  setEditingItemIndex,
+  handleItemChange,
+  handleChoiceChange,
+  handleAddChoice,
+  handleRemoveChoice,
+}) {
+  if (showJsonView) {
+    // JSON View
+    return (
+      <div className="space-y-4">
+        {editedItems.map((item, index) => (
+          <div key={index} className="bg-white rounded-lg border shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex-shrink-0 w-8 h-8 bg-gray-700 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                {item.question_label || index + 1}
+              </span>
+              <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
+              {item.has_solution ? (
+                <span className="flex items-center gap-1 text-xs text-green-600 ml-auto">
+                  <CheckCheck className="w-3 h-3" />
+                  matched
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs text-orange-500 ml-auto">
+                  <AlertCircle className="w-3 h-3" />
+                  no solution
+                </span>
+              )}
+            </div>
+            <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
+              {JSON.stringify(item, null, 2)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Formatted View with Edit capability
+  return (
+    <div className="space-y-4">
+      {editedItems.map((item, index) => (
+        <div
+          key={index}
+          className={`border rounded-lg p-4 ${item.has_solution ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'}`}
+        >
+          {/* View Mode */}
+          {editingItemIndex !== index && (
+            <ItemViewMode
+              item={item}
+              index={index}
+              onEdit={() => setEditingItemIndex(index)}
+            />
+          )}
+
+          {/* Edit Mode */}
+          {editingItemIndex === index && (
+            <>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-blue-500" />
+                  <label className="text-sm font-medium text-gray-700">Question Label:</label>
+                  <input
+                    type="text"
+                    value={item.question_label || ''}
+                    onChange={(e) => handleItemChange(index, 'question_label', e.target.value)}
+                    className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <button
+                  onClick={() => setEditingItemIndex(null)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
+                >
+                  <CheckCheck className="w-4 h-4" />
+                  Done
+                </button>
+              </div>
+
+              {/* Question Text */}
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Question:</label>
+                <textarea
+                  value={item.text || ''}
+                  onChange={(e) => handleItemChange(index, 'text', e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Choices */}
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700">Choices:</label>
+                  <button
+                    type="button"
+                    onClick={() => handleAddChoice(index)}
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add Choice
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {(item.choices || []).map((choice, choiceIndex) => (
+                    <div key={choiceIndex} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={choice}
+                        onChange={(e) => handleChoiceChange(index, choiceIndex, e.target.value)}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                        placeholder={`Choice ${choiceIndex + 1}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveChoice(index, choiceIndex)}
+                        className="p-1 text-red-500 hover:bg-red-50 rounded"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Solution Fields */}
+              <div className="border-t border-gray-200 pt-3 mt-3">
+                <p className="text-sm font-medium text-green-700 mb-2">Solution:</p>
+
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Answer Key:</label>
+                  <input
+                    type="text"
+                    value={item.answer_key || ''}
+                    onChange={(e) => handleItemChange(index, 'answer_key', e.target.value)}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
+                    placeholder="e.g., A, B, C, D"
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Worked Solution:</label>
+                  <textarea
+                    value={item.worked_solution || ''}
+                    onChange={(e) => handleItemChange(index, 'worked_solution', e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500"
+                    placeholder="Step-by-step solution..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Explanation:</label>
+                  <textarea
+                    value={item.explanation || ''}
+                    onChange={(e) => handleItemChange(index, 'explanation', e.target.value)}
+                    rows={2}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500"
+                    placeholder="Additional explanation (optional)..."
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+});
 
 export default function PrepareLessonModal({ isOpen, onClose }) {
   const queryClient = useQueryClient();
@@ -27,6 +272,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
   const [editingItemIndex, setEditingItemIndex] = useState(null);
   const [showJsonView, setShowJsonView] = useState(false);
   const [lessonName, setLessonName] = useState('');
+  const [commonParentSectionName, setCommonParentSectionName] = useState('');
+  const [lessonItemCount, setLessonItemCount] = useState('');
 
   // Fetch books
   const { data: books } = useQuery({
@@ -69,6 +316,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       setEditingItemIndex(null);
       setShowJsonView(false);
       setLessonName('');
+      setCommonParentSectionName('');
+      setLessonItemCount('');
     }
   }, [isOpen]);
 
@@ -135,6 +384,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
   const createLessonMutation = useMutation({
     mutationFn: () => api.post('/lessons', {
       name: lessonName.trim(),
+      common_parent_section_name: commonParentSectionName.trim() || null,
+      lesson_item_count: lessonItemCount ? parseInt(lessonItemCount, 10) : null,
       question_set_id: selectedQuestionSetId,
       solution_set_id: selectedSolutionSetId,
       items: editedItems,
@@ -186,6 +437,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     setEditingItemIndex(null);
     setShowJsonView(false);
     setLessonName('');
+    setCommonParentSectionName('');
+    setLessonItemCount('');
     prepareLessonMutation.reset();
     createLessonMutation.reset();
     onClose();
@@ -197,20 +450,22 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     setEditingItemIndex(null);
     setShowJsonView(false);
     setLessonName('');
+    setCommonParentSectionName('');
+    setLessonItemCount('');
     prepareLessonMutation.reset();
   };
 
-  // Handler to update a specific item field
-  const handleItemChange = (index, field, value) => {
+  // Handler to update a specific item field (memoized to prevent re-renders)
+  const handleItemChange = useCallback((index, field, value) => {
     setEditedItems(prev => {
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
       return updated;
     });
-  };
+  }, []);
 
-  // Handler to update choices array
-  const handleChoiceChange = (itemIndex, choiceIndex, value) => {
+  // Handler to update choices array (memoized)
+  const handleChoiceChange = useCallback((itemIndex, choiceIndex, value) => {
     setEditedItems(prev => {
       const updated = [...prev];
       const choices = [...(updated[itemIndex].choices || [])];
@@ -218,20 +473,20 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       updated[itemIndex] = { ...updated[itemIndex], choices };
       return updated;
     });
-  };
+  }, []);
 
-  // Handler to add a new choice
-  const handleAddChoice = (itemIndex) => {
+  // Handler to add a new choice (memoized)
+  const handleAddChoice = useCallback((itemIndex) => {
     setEditedItems(prev => {
       const updated = [...prev];
       const choices = [...(updated[itemIndex].choices || []), ''];
       updated[itemIndex] = { ...updated[itemIndex], choices };
       return updated;
     });
-  };
+  }, []);
 
-  // Handler to remove a choice
-  const handleRemoveChoice = (itemIndex, choiceIndex) => {
+  // Handler to remove a choice (memoized)
+  const handleRemoveChoice = useCallback((itemIndex, choiceIndex) => {
     setEditedItems(prev => {
       const updated = [...prev];
       const choices = [...(updated[itemIndex].choices || [])];
@@ -239,7 +494,7 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       updated[itemIndex] = { ...updated[itemIndex], choices };
       return updated;
     });
-  };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -291,225 +546,18 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
             </div>
           </div>
 
-          {/* Content */}
+          {/* Content - Memoized to prevent re-renders when form inputs change */}
           <div className="flex-1 overflow-auto p-4 bg-gray-50">
-            {showJsonView ? (
-              // JSON View
-              <div className="space-y-4">
-                {editedItems.map((item, index) => (
-                  <div key={index} className="bg-white rounded-lg border shadow-sm p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="flex-shrink-0 w-8 h-8 bg-gray-700 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                        {item.question_label || index + 1}
-                      </span>
-                      <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
-                      {item.has_solution ? (
-                        <span className="flex items-center gap-1 text-xs text-green-600 ml-auto">
-                          <CheckCheck className="w-3 h-3" />
-                          matched
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-xs text-orange-500 ml-auto">
-                          <AlertCircle className="w-3 h-3" />
-                          no solution
-                        </span>
-                      )}
-                    </div>
-                    <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
-                      {JSON.stringify(item, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              // Formatted View with Edit capability
-              <div className="space-y-4">
-                {editedItems.map((item, index) => (
-                  <div
-                    key={index}
-                    className={`border rounded-lg p-4 ${item.has_solution ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'}`}
-                  >
-                    {/* View Mode */}
-                    {editingItemIndex !== index && (
-                      <>
-                        <div className="flex items-start justify-between mb-2">
-                          <span className="text-sm font-bold text-gray-700">
-                            Q{item.question_label || index + 1}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            {item.has_solution ? (
-                              <span className="flex items-center gap-1 text-xs text-green-600">
-                                <CheckCheck className="w-4 h-4" />
-                                Solution matched
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-1 text-xs text-orange-600">
-                                <AlertCircle className="w-4 h-4" />
-                                No solution
-                              </span>
-                            )}
-                            <button
-                              onClick={() => setEditingItemIndex(index)}
-                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="Edit"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Question */}
-                        <div className="mb-3">
-                          <QuestionText text={item.text || ''} className="text-sm" />
-                          {item.choices && item.choices.length > 0 && (
-                            <div className="mt-2 pl-4 space-y-1">
-                              {item.choices.map((choice, i) => (
-                                <QuestionText key={i} text={choice} className="text-sm text-gray-600" />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Solution */}
-                        {(item.answer_key || item.worked_solution || item.explanation) && (
-                          <div className="border-t border-green-200 pt-3 mt-3">
-                            {item.answer_key && (
-                              <div className="text-sm">
-                                <span className="font-medium text-green-700">Answer:</span>{' '}
-                                <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded font-bold">
-                                  {item.answer_key}
-                                </span>
-                              </div>
-                            )}
-                            {item.worked_solution && (
-                              <div className="mt-2">
-                                <span className="text-sm font-medium text-green-700">Solution:</span>
-                                <QuestionText text={item.worked_solution} className="text-sm text-gray-700 mt-1" />
-                              </div>
-                            )}
-                            {item.explanation && (
-                              <div className="mt-2">
-                                <span className="text-sm font-medium text-green-700">Explanation:</span>
-                                <QuestionText text={item.explanation} className="text-sm text-gray-700 mt-1" />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {/* Edit Mode */}
-                    {editingItemIndex === index && (
-                      <>
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <Edit3 className="w-4 h-4 text-blue-500" />
-                            <label className="text-sm font-medium text-gray-700">Question Label:</label>
-                            <input
-                              type="text"
-                              value={item.question_label || ''}
-                              onChange={(e) => handleItemChange(index, 'question_label', e.target.value)}
-                              className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <button
-                            onClick={() => setEditingItemIndex(null)}
-                            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
-                          >
-                            <CheckCheck className="w-4 h-4" />
-                            Done
-                          </button>
-                        </div>
-
-                        {/* Question Text */}
-                        <div className="mb-3">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Question:</label>
-                          <textarea
-                            value={item.text || ''}
-                            onChange={(e) => handleItemChange(index, 'text', e.target.value)}
-                            rows={3}
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
-
-                        {/* Choices */}
-                        <div className="mb-3">
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-sm font-medium text-gray-700">Choices:</label>
-                            <button
-                              type="button"
-                              onClick={() => handleAddChoice(index)}
-                              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-                            >
-                              <Plus className="w-3 h-3" />
-                              Add Choice
-                            </button>
-                          </div>
-                          <div className="space-y-2">
-                            {(item.choices || []).map((choice, choiceIndex) => (
-                              <div key={choiceIndex} className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={choice}
-                                  onChange={(e) => handleChoiceChange(index, choiceIndex, e.target.value)}
-                                  className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                                  placeholder={`Choice ${choiceIndex + 1}`}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveChoice(index, choiceIndex)}
-                                  className="p-1 text-red-500 hover:bg-red-50 rounded"
-                                >
-                                  <Minus className="w-4 h-4" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Solution Fields */}
-                        <div className="border-t border-gray-200 pt-3 mt-3">
-                          <p className="text-sm font-medium text-green-700 mb-2">Solution:</p>
-
-                          <div className="mb-3">
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Answer Key:</label>
-                            <input
-                              type="text"
-                              value={item.answer_key || ''}
-                              onChange={(e) => handleItemChange(index, 'answer_key', e.target.value)}
-                              className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                              placeholder="e.g., A, B, C, D"
-                            />
-                          </div>
-
-                          <div className="mb-3">
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Worked Solution:</label>
-                            <textarea
-                              value={item.worked_solution || ''}
-                              onChange={(e) => handleItemChange(index, 'worked_solution', e.target.value)}
-                              rows={3}
-                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500"
-                              placeholder="Step-by-step solution..."
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Explanation:</label>
-                            <textarea
-                              value={item.explanation || ''}
-                              onChange={(e) => handleItemChange(index, 'explanation', e.target.value)}
-                              rows={2}
-                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-1 focus:ring-green-500"
-                              placeholder="Additional explanation (optional)..."
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <ItemsList
+              editedItems={editedItems}
+              editingItemIndex={editingItemIndex}
+              showJsonView={showJsonView}
+              setEditingItemIndex={setEditingItemIndex}
+              handleItemChange={handleItemChange}
+              handleChoiceChange={handleChoiceChange}
+              handleAddChoice={handleAddChoice}
+              handleRemoveChoice={handleRemoveChoice}
+            />
           </div>
 
           {/* Footer - Create Lesson Form */}
@@ -526,6 +574,31 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                   placeholder="e.g., Chapter 3 Practice Problems"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   required
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Common Parent Section Name
+                </label>
+                <input
+                  type="text"
+                  value={commonParentSectionName}
+                  onChange={(e) => setCommonParentSectionName(e.target.value)}
+                  placeholder="e.g., Algebra Basics"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                />
+              </div>
+              <div className="w-32">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Items per Lesson
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={lessonItemCount}
+                  onChange={(e) => setLessonItemCount(e.target.value)}
+                  placeholder="e.g., 5"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
               </div>
               <button
