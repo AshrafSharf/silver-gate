@@ -74,7 +74,7 @@ export default function LessonsPage() {
     : [];
 
   const getLessonCount = (lesson) => {
-    return lesson.question_solution_json?.lessons?.length || 0;
+    return lesson.lesson_items?.length || 0;
   };
 
   return (

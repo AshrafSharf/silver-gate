@@ -14,7 +14,8 @@ export const lessonsService = {
         book:books(id, name, display_name),
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
-        solution_set:solution_sets(id, name)
+        solution_set:solution_sets(id, name),
+        lesson_items(id, question_label, problem_statement, solution_context, question_solution_item_json, position)
       `)
       .order('created_at', { ascending: false });
 
@@ -29,6 +30,16 @@ export const lessonsService = {
     const { data, error } = await query;
 
     if (error) throw error;
+
+    // Sort lesson_items by position for each lesson
+    if (data) {
+      data.forEach(lesson => {
+        if (lesson.lesson_items) {
+          lesson.lesson_items.sort((a, b) => a.position - b.position);
+        }
+      });
+    }
+
     return data;
   },
 
@@ -43,7 +54,8 @@ export const lessonsService = {
         book:books(id, name, display_name),
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
-        solution_set:solution_sets(id, name)
+        solution_set:solution_sets(id, name),
+        lesson_items(id, question_label, problem_statement, solution_context, question_solution_item_json, position)
       `)
       .eq('id', id)
       .single();
@@ -54,6 +66,12 @@ export const lessonsService = {
       }
       throw error;
     }
+
+    // Sort lesson_items by position
+    if (data && data.lesson_items) {
+      data.lesson_items.sort((a, b) => a.position - b.position);
+    }
+
     return data;
   },
 
@@ -95,11 +113,11 @@ export const lessonsService = {
     });
 
     // Merge questions with solutions based on question_label
-    const lessons = questions.map((question) => {
+    const mergedItems = questions.map((question) => {
       const questionLabel = String(question.question_label || '');
       const matchingSolution = solutionsMap.get(questionLabel);
 
-      const lesson = {
+      const item = {
         question_label: question.question_label,
         text: question.text,
         choices: question.choices || [],
@@ -108,21 +126,21 @@ export const lessonsService = {
       // Add solution fields if matching solution exists
       if (matchingSolution) {
         if (matchingSolution.answer_key) {
-          lesson.answer_key = matchingSolution.answer_key;
+          item.answer_key = matchingSolution.answer_key;
         }
         if (matchingSolution.worked_solution) {
-          lesson.worked_solution = matchingSolution.worked_solution;
+          item.worked_solution = matchingSolution.worked_solution;
         }
         if (matchingSolution.explanation) {
-          lesson.explanation = matchingSolution.explanation;
+          item.explanation = matchingSolution.explanation;
         }
       }
 
-      return lesson;
+      return item;
     });
 
     // Create the lesson record
-    const { data, error } = await supabase
+    const { data: lesson, error: lessonError } = await supabase
       .from('lessons')
       .insert({
         name,
@@ -130,23 +148,54 @@ export const lessonsService = {
         chapter_id: questionSet.chapter_id,
         question_set_id,
         solution_set_id,
-        question_solution_json: { lessons },
       })
-      .select(`
-        *,
-        book:books(id, name, display_name),
-        chapter:chapters(id, name, display_name, chapter_number),
-        question_set:question_sets(id, name),
-        solution_set:solution_sets(id, name)
-      `)
+      .select()
       .single();
 
-    if (error) throw error;
-    return data;
+    if (lessonError) throw lessonError;
+
+    // Create lesson_items for each merged item
+    const lessonItems = mergedItems.map((item, index) => {
+      // Build problem_statement: question text + choices
+      let problemStatement = item.text || '';
+      if (item.choices && item.choices.length > 0) {
+        problemStatement += '\n\n' + item.choices.join('\n');
+      }
+
+      // Build solution_context: answer_key + worked_solution
+      let solutionContext = '';
+      if (item.answer_key) {
+        solutionContext = `Answer: ${item.answer_key}`;
+      }
+      if (item.worked_solution) {
+        solutionContext += (solutionContext ? '\n\n' : '') + item.worked_solution;
+      }
+
+      return {
+        lesson_id: lesson.id,
+        question_label: item.question_label,
+        problem_statement: problemStatement,
+        solution_context: solutionContext,
+        question_solution_item_json: item,
+        position: index,
+      };
+    });
+
+    // Insert all lesson_items
+    if (lessonItems.length > 0) {
+      const { error: itemsError } = await supabase
+        .from('lesson_items')
+        .insert(lessonItems);
+
+      if (itemsError) throw itemsError;
+    }
+
+    // Fetch and return the complete lesson with items
+    return await this.findById(lesson.id);
   },
 
   /**
-   * Update a lesson
+   * Update a lesson (name only)
    */
   async update(id, updateData) {
     const updates = {};
@@ -155,21 +204,60 @@ export const lessonsService = {
       updates.name = updateData.name;
     }
 
-    if (updateData.question_solution_json !== undefined) {
-      updates.question_solution_json = updateData.question_solution_json;
-    }
-
     const { data, error } = await supabase
       .from('lessons')
       .update(updates)
       .eq('id', id)
-      .select(`
-        *,
-        book:books(id, name, display_name),
-        chapter:chapters(id, name, display_name, chapter_number),
-        question_set:question_sets(id, name),
-        solution_set:solution_sets(id, name)
-      `)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Return full lesson with items
+    return await this.findById(id);
+  },
+
+  /**
+   * Update a single lesson item
+   */
+  async updateLessonItem(itemId, updateData) {
+    const updates = {};
+
+    // Extract individual fields from question_solution_item_json if provided
+    if (updateData.question_solution_item_json !== undefined) {
+      updates.question_solution_item_json = updateData.question_solution_item_json;
+
+      // Also update problem_statement and solution_context based on the JSON
+      const item = updateData.question_solution_item_json;
+
+      // Build problem_statement
+      let problemStatement = item.text || '';
+      if (item.choices && item.choices.length > 0) {
+        problemStatement += '\n\n' + item.choices.join('\n');
+      }
+      updates.problem_statement = problemStatement;
+
+      // Build solution_context
+      let solutionContext = '';
+      if (item.answer_key) {
+        solutionContext = `Answer: ${item.answer_key}`;
+      }
+      if (item.worked_solution) {
+        solutionContext += (solutionContext ? '\n\n' : '') + item.worked_solution;
+      }
+      updates.solution_context = solutionContext;
+
+      // Update question_label if present
+      if (item.question_label !== undefined) {
+        updates.question_label = item.question_label;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('lesson_items')
+      .update(updates)
+      .eq('id', itemId)
+      .select()
       .single();
 
     if (error) throw error;
@@ -177,13 +265,26 @@ export const lessonsService = {
   },
 
   /**
-   * Delete a lesson
+   * Delete a lesson (cascades to lesson_items)
    */
   async delete(id) {
     const { error } = await supabase
       .from('lessons')
       .delete()
       .eq('id', id);
+
+    if (error) throw error;
+    return true;
+  },
+
+  /**
+   * Delete a single lesson item
+   */
+  async deleteLessonItem(itemId) {
+    const { error } = await supabase
+      .from('lesson_items')
+      .delete()
+      .eq('id', itemId);
 
     if (error) throw error;
     return true;

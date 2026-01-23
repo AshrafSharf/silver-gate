@@ -8,46 +8,84 @@ export default function LessonModal({ lesson, onClose }) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(lesson.name);
-  const [editedLessons, setEditedLessons] = useState(
-    lesson.question_solution_json?.lessons || []
+  const [editedItems, setEditedItems] = useState(
+    lesson.lesson_items || []
   );
 
-  // Update lesson mutation
+  // Update lesson name mutation
   const updateLessonMutation = useMutation({
-    mutationFn: (updateData) => api.put(`/lessons/${lesson.id}`, updateData),
+    mutationFn: (name) => api.put(`/lessons/${lesson.id}`, { name }),
     onSuccess: () => {
       queryClient.invalidateQueries(['lessons']);
-      setIsEditing(false);
     },
   });
 
-  const handleSave = () => {
-    updateLessonMutation.mutate({
-      name: editedName,
-      question_solution_json: {
-        lessons: editedLessons,
-      },
-    });
+  // Update lesson item mutation
+  const updateItemMutation = useMutation({
+    mutationFn: ({ itemId, data }) =>
+      api.put(`/lessons/${lesson.id}/items/${itemId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['lessons']);
+    },
+  });
+
+  const handleSave = async () => {
+    try {
+      // Update lesson name if changed
+      if (editedName !== lesson.name) {
+        await updateLessonMutation.mutateAsync(editedName);
+      }
+
+      // Update each lesson item
+      const updatePromises = editedItems.map((item, index) => {
+        const originalItem = lesson.lesson_items[index];
+
+        // Check if item was modified by comparing JSON
+        if (JSON.stringify(item.question_solution_item_json) !==
+            JSON.stringify(originalItem?.question_solution_item_json)) {
+          return updateItemMutation.mutateAsync({
+            itemId: item.id,
+            data: { question_solution_item_json: item.question_solution_item_json },
+          });
+        }
+        return Promise.resolve();
+      });
+
+      await Promise.all(updatePromises);
+      setIsEditing(false);
+    } catch (error) {
+      console.error('Error saving lesson:', error);
+    }
   };
 
   const handleCancel = () => {
     setEditedName(lesson.name);
-    setEditedLessons(lesson.question_solution_json?.lessons || []);
+    setEditedItems(lesson.lesson_items || []);
     setIsEditing(false);
   };
 
-  const updateLesson = (index, field, value) => {
-    const updated = [...editedLessons];
-    updated[index] = { ...updated[index], [field]: value };
-    setEditedLessons(updated);
+  const updateItem = (index, field, value) => {
+    const updated = [...editedItems];
+    const itemJson = { ...updated[index].question_solution_item_json };
+    itemJson[field] = value;
+    updated[index] = {
+      ...updated[index],
+      question_solution_item_json: itemJson
+    };
+    setEditedItems(updated);
   };
 
-  const updateChoice = (lessonIndex, choiceIndex, value) => {
-    const updated = [...editedLessons];
-    const choices = [...(updated[lessonIndex].choices || [])];
+  const updateChoice = (itemIndex, choiceIndex, value) => {
+    const updated = [...editedItems];
+    const itemJson = { ...updated[itemIndex].question_solution_item_json };
+    const choices = [...(itemJson.choices || [])];
     choices[choiceIndex] = value;
-    updated[lessonIndex] = { ...updated[lessonIndex], choices };
-    setEditedLessons(updated);
+    itemJson.choices = choices;
+    updated[itemIndex] = {
+      ...updated[itemIndex],
+      question_solution_item_json: itemJson
+    };
+    setEditedItems(updated);
   };
 
   return (
@@ -77,7 +115,7 @@ export default function LessonModal({ lesson, onClose }) {
                       </>
                     )}
                     <span>-</span>
-                    <span>{editedLessons.length} items</span>
+                    <span>{editedItems.length} items</span>
                   </div>
                 </div>
               </div>
@@ -122,23 +160,25 @@ export default function LessonModal({ lesson, onClose }) {
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4 bg-gray-50">
-          {editedLessons.length > 0 ? (
+          {editedItems.length > 0 ? (
             <div className="space-y-4">
-              {editedLessons.map((item, index) => (
-                <div key={index} className="bg-white rounded-lg border shadow-sm p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-10 h-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-sm font-bold">
-                      {item.question_label || index + 1}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      {/* Question */}
-                      <div className="mb-3">
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Question:</label>
-                        {isEditing ? (
-                          <textarea
-                            value={item.text || ''}
-                            onChange={(e) => updateLesson(index, 'text', e.target.value)}
-                            rows={3}
+              {editedItems.map((lessonItem, index) => {
+                const item = lessonItem.question_solution_item_json;
+                return (
+                  <div key={lessonItem.id || index} className="bg-white rounded-lg border shadow-sm p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-10 h-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-sm font-bold">
+                        {item.question_label || index + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        {/* Question */}
+                        <div className="mb-3">
+                          <label className="text-xs font-medium text-gray-500 block mb-1">Question:</label>
+                          {isEditing ? (
+                            <textarea
+                              value={item.text || ''}
+                              onChange={(e) => updateItem(index, 'text', e.target.value)}
+                              rows={3}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                           />
                         ) : (
@@ -169,69 +209,70 @@ export default function LessonModal({ lesson, onClose }) {
                         </div>
                       )}
 
-                      {/* Answer Key */}
-                      <div className="mb-3">
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Answer:</label>
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={item.answer_key || ''}
-                            onChange={(e) => updateLesson(index, 'answer_key', e.target.value)}
-                            className="px-3 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
-                            placeholder="e.g., A, B, C, D"
-                          />
-                        ) : item.answer_key ? (
-                          <span className="inline-flex items-center justify-center px-3 py-1 bg-green-100 text-green-700 rounded-md text-sm font-bold">
-                            {item.answer_key}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-sm">No answer provided</span>
-                        )}
-                      </div>
-
-                      {/* Worked Solution */}
-                      <div className="mb-3">
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Solution:</label>
-                        {isEditing ? (
-                          <textarea
-                            value={item.worked_solution || ''}
-                            onChange={(e) => updateLesson(index, 'worked_solution', e.target.value)}
-                            rows={4}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm"
-                            placeholder="Step-by-step solution"
-                          />
-                        ) : item.worked_solution ? (
-                          <div className="pl-3 border-l-2 border-purple-200">
-                            <QuestionText text={item.worked_solution} className="whitespace-pre-wrap text-sm" />
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 text-sm">No solution provided</span>
-                        )}
-                      </div>
-
-                      {/* Explanation */}
-                      {(isEditing || item.explanation) && (
-                        <div>
-                          <label className="text-xs font-medium text-gray-500 block mb-1">Explanation:</label>
+                        {/* Answer Key */}
+                        <div className="mb-3">
+                          <label className="text-xs font-medium text-gray-500 block mb-1">Answer:</label>
                           {isEditing ? (
-                            <textarea
-                              value={item.explanation || ''}
-                              onChange={(e) => updateLesson(index, 'explanation', e.target.value)}
-                              rows={2}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 text-sm"
-                              placeholder="Additional explanation (optional)"
+                            <input
+                              type="text"
+                              value={item.answer_key || ''}
+                              onChange={(e) => updateItem(index, 'answer_key', e.target.value)}
+                              className="px-3 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
+                              placeholder="e.g., A, B, C, D"
                             />
+                          ) : item.answer_key ? (
+                            <span className="inline-flex items-center justify-center px-3 py-1 bg-green-100 text-green-700 rounded-md text-sm font-bold">
+                              {item.answer_key}
+                            </span>
                           ) : (
-                            <div className="pl-3 border-l-2 border-gray-200">
-                              <QuestionText text={item.explanation} className="text-gray-600 whitespace-pre-wrap text-sm" />
-                            </div>
+                            <span className="text-gray-400 text-sm">No answer provided</span>
                           )}
                         </div>
-                      )}
+
+                        {/* Worked Solution */}
+                        <div className="mb-3">
+                          <label className="text-xs font-medium text-gray-500 block mb-1">Solution:</label>
+                          {isEditing ? (
+                            <textarea
+                              value={item.worked_solution || ''}
+                              onChange={(e) => updateItem(index, 'worked_solution', e.target.value)}
+                              rows={4}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm"
+                              placeholder="Step-by-step solution"
+                            />
+                          ) : item.worked_solution ? (
+                            <div className="pl-3 border-l-2 border-purple-200">
+                              <QuestionText text={item.worked_solution} className="whitespace-pre-wrap text-sm" />
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-sm">No solution provided</span>
+                          )}
+                        </div>
+
+                        {/* Explanation */}
+                        {(isEditing || item.explanation) && (
+                          <div>
+                            <label className="text-xs font-medium text-gray-500 block mb-1">Explanation:</label>
+                            {isEditing ? (
+                              <textarea
+                                value={item.explanation || ''}
+                                onChange={(e) => updateItem(index, 'explanation', e.target.value)}
+                                rows={2}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-500 focus:border-gray-500 text-sm"
+                                placeholder="Additional explanation (optional)"
+                              />
+                            ) : (
+                              <div className="pl-3 border-l-2 border-gray-200">
+                                <QuestionText text={item.explanation} className="text-gray-600 whitespace-pre-wrap text-sm" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-12">

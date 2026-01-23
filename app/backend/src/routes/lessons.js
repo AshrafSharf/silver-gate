@@ -61,27 +61,43 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 }));
 
-// Update a lesson
+// Update a lesson (name only)
 router.put('/:id', asyncHandler(async (req, res) => {
-  const { name, question_solution_json } = req.body;
+  const { name } = req.body;
 
-  if (!name && !question_solution_json) {
+  if (!name) {
     return res.status(400).json({
       success: false,
-      error: 'At least one field (name or question_solution_json) is required for update',
+      error: 'Lesson name is required',
     });
   }
 
-  const updateData = {};
-  if (name !== undefined) {
-    updateData.name = name.trim();
-  }
-  if (question_solution_json !== undefined) {
-    updateData.question_solution_json = question_solution_json;
+  const lesson = await lessonsService.update(req.params.id, { name: name.trim() });
+  res.json({ success: true, data: lesson });
+}));
+
+// Update a single lesson item
+router.put('/:lessonId/items/:itemId', asyncHandler(async (req, res) => {
+  const { question_solution_item_json } = req.body;
+
+  if (!question_solution_item_json) {
+    return res.status(400).json({
+      success: false,
+      error: 'question_solution_item_json is required',
+    });
   }
 
-  const lesson = await lessonsService.update(req.params.id, updateData);
-  res.json({ success: true, data: lesson });
+  const item = await lessonsService.updateLessonItem(req.params.itemId, {
+    question_solution_item_json,
+  });
+
+  res.json({ success: true, data: item });
+}));
+
+// Delete a lesson item
+router.delete('/:lessonId/items/:itemId', asyncHandler(async (req, res) => {
+  await lessonsService.deleteLessonItem(req.params.itemId);
+  res.json({ success: true, message: 'Lesson item deleted successfully' });
 }));
 
 // Delete a lesson

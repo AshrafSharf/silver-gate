@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     chapter_id UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
     question_set_id UUID REFERENCES question_sets(id) ON DELETE SET NULL,
     solution_set_id UUID REFERENCES solution_sets(id) ON DELETE SET NULL,
-    question_solution_json JSONB NOT NULL DEFAULT '{"lessons": []}',
+    question_solution_json JSONB DEFAULT '{"lessons": []}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
