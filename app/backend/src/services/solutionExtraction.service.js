@@ -4,8 +4,9 @@ import { config } from '../config/index.js';
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 
-// Parsing instructions for solution extraction
-const SOLUTION_PARSING_INSTRUCTIONS = `
+// Parsing instructions by source type
+const SOLUTION_PARSING_INSTRUCTIONS = {
+  'Question Bank': `
 Extract all solutions, answer keys, and worked solutions from this document.
 
 For each solution, identify:
@@ -33,13 +34,48 @@ Important:
 - If only a worked solution is provided (no answer key), leave answer_key as empty string
 - Include all solutions found in the document
 - If a solution has sub-parts, treat each sub-part as a separate solution entry (e.g., "1a", "1b")
-`;
+`,
+  'Academic Book': `
+Extract all solutions, answer keys, and worked solutions from this document.
+
+For each solution, identify:
+1. The question label/number it corresponds to (e.g., "1", "2", "1a", "1b", "Q1", etc.)
+2. The answer key (if multiple choice, e.g., "A", "B", "C", "D")
+3. The complete step-by-step worked solution
+4. Any brief explanation (if provided)
+
+Return the result in the following JSON format:
+{
+  "solutions": [
+    {
+      "question_label": "1",
+      "answer_key": "C",
+      "worked_solution": "Step 1: Apply formula $x = \\frac{-b}{2a}$...\\nStep 2: Substitute values...",
+      "explanation": "Optional explanation"
+    }
+  ]
+}
+
+Important:
+- Preserve the original question label/number exactly as it appears in the document
+- Preserve LaTeX math notation ($...$ and $$...$$)
+- If only an answer key is provided (no worked solution), still include the entry with worked_solution as empty string
+- If only a worked solution is provided (no answer key), leave answer_key as empty string
+- Include all solutions found in the document
+- If a solution has sub-parts, treat each sub-part as a separate solution entry (e.g., "1a", "1b")
+`,
+};
+
+// Helper to get parsing instructions for a type
+const getParsingInstructions = (type) => {
+  return SOLUTION_PARSING_INSTRUCTIONS[type] || SOLUTION_PARSING_INSTRUCTIONS['Question Bank'];
+};
 
 export const solutionExtractionService = {
   /**
    * Create a solution set from selected scanned items
    * @param {string[]} itemIds - Array of scanned item IDs (in selection order)
-   * @param {object} options - Optional name, metadata, and question_set_id
+   * @param {object} options - Optional name, type, metadata, and question_set_id
    * @returns {Promise<object>} - Created solution set record
    */
   async createSolutionSet(itemIds, options = {}) {
@@ -69,6 +105,9 @@ export const solutionExtractionService = {
     // Use book_id and chapter_id from first item
     const firstItem = items[0];
 
+    // Default type to 'Question Bank' if not provided
+    const sourceType = options.type || 'Question Bank';
+
     const { data, error } = await supabase
       .from('solution_sets')
       .insert({
@@ -78,6 +117,7 @@ export const solutionExtractionService = {
         source_item_ids: itemIds,
         question_set_id: options.question_set_id || null,
         status: 'pending',
+        source_type: sourceType,
         metadata: options.metadata || {},
       })
       .select()
@@ -107,8 +147,9 @@ export const solutionExtractionService = {
       const combinedContent = await this.combineLatexContent(solutionSet.source_item_ids);
       console.log(`[SOLUTION_EXTRACT] Combined LaTeX content size: ${Math.round(combinedContent.length / 1024)}KB`);
 
-      // Submit to LlamaParse
-      const jobId = await this.submitToLlamaParse(combinedContent);
+      // Submit to LlamaParse with type-specific instructions
+      const sourceType = solutionSet.source_type || 'Question Bank';
+      const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
 
       // Store the job ID
       await supabase
@@ -199,15 +240,20 @@ export const solutionExtractionService = {
   /**
    * Submit content to LlamaParse for solution extraction
    * @param {string} content - Combined LaTeX/text content
+   * @param {string} sourceType - Source type ('Question Bank' or 'Academic Book')
    * @returns {Promise<string>} - Job ID from LlamaParse
    */
-  async submitToLlamaParse(content) {
+  async submitToLlamaParse(content, sourceType = 'Question Bank') {
     // Create a text file blob from the combined content
     const blob = new Blob([content], { type: 'text/plain' });
 
+    // Get parsing instructions based on source type
+    const parsingInstructions = getParsingInstructions(sourceType);
+    console.log(`[SOLUTION_EXTRACT] Using parsing instructions for type: ${sourceType}`);
+
     const formData = new FormData();
     formData.append('file', blob, 'solutions.txt');
-    formData.append('parsing_instruction', SOLUTION_PARSING_INSTRUCTIONS);
+    formData.append('parsing_instruction', parsingInstructions);
     formData.append('result_type', 'markdown');
     formData.append('premium_mode', 'true');
 

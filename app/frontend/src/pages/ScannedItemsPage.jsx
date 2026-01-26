@@ -40,6 +40,20 @@ export default function ScannedItemsPage() {
     chapter_id: '',
   });
 
+  // Extract questions modal state
+  const [showExtractModal, setShowExtractModal] = useState(false);
+  const [extractFormData, setExtractFormData] = useState({
+    name: '',
+    type: 'Question Bank',
+  });
+
+  // Extract solutions modal state
+  const [showExtractSolutionsModal, setShowExtractSolutionsModal] = useState(false);
+  const [extractSolutionsFormData, setExtractSolutionsFormData] = useState({
+    name: '',
+    type: 'Question Bank',
+  });
+
   // Fetch books for dropdown
   const { data: books } = useQuery({
     queryKey: ['books'],
@@ -210,19 +224,41 @@ export default function ScannedItemsPage() {
   };
 
   const handleExtractQuestions = () => {
+    // Open the extraction modal with default values
+    setExtractFormData({
+      name: `Extraction ${new Date().toLocaleString()}`,
+      type: 'Question Bank',
+    });
+    setShowExtractModal(true);
+  };
+
+  const handleSubmitExtraction = () => {
     const orderedIds = getOrderedItemIds();
     extractQuestionsMutation.mutate({
       item_ids: orderedIds,
-      name: `Extraction ${new Date().toLocaleString()}`,
+      name: extractFormData.name,
+      type: extractFormData.type,
     });
+    setShowExtractModal(false);
   };
 
   const handleExtractSolutions = () => {
+    // Open the extraction modal with default values
+    setExtractSolutionsFormData({
+      name: `Solution Extraction ${new Date().toLocaleString()}`,
+      type: 'Question Bank',
+    });
+    setShowExtractSolutionsModal(true);
+  };
+
+  const handleSubmitSolutionExtraction = () => {
     const orderedIds = getOrderedItemIds();
     extractSolutionsMutation.mutate({
       item_ids: orderedIds,
-      name: `Solution Extraction ${new Date().toLocaleString()}`,
+      name: extractSolutionsFormData.name,
+      type: extractSolutionsFormData.type,
     });
+    setShowExtractSolutionsModal(false);
   };
 
   const canSelect = (item) => {
@@ -805,6 +841,148 @@ export default function ScannedItemsPage() {
                 }`}
               >
                 {updateItemMutation.isPending ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extract Questions Modal */}
+      {showExtractModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b bg-blue-50">
+              <h2 className="text-lg font-semibold text-blue-800">
+                Extract Questions
+              </h2>
+              <button
+                onClick={() => setShowExtractModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={extractFormData.name}
+                  onChange={(e) => setExtractFormData({ ...extractFormData, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Enter extraction name..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Source Type
+                </label>
+                <select
+                  value={extractFormData.type}
+                  onChange={(e) => setExtractFormData({ ...extractFormData, type: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="Question Bank">Question Bank</option>
+                  <option value="Academic Book">Academic Book</option>
+                </select>
+              </div>
+
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Selected Items:</span>{' '}
+                  {selectedItems.length} item{selectedItems.length > 1 ? 's' : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 p-4 border-t">
+              <button
+                onClick={() => setShowExtractModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitExtraction}
+                disabled={!extractFormData.name.trim() || extractQuestionsMutation.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {extractQuestionsMutation.isPending ? 'Extracting...' : 'Start Extraction'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extract Solutions Modal */}
+      {showExtractSolutionsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b bg-purple-50">
+              <h2 className="text-lg font-semibold text-purple-800">
+                Extract Solutions
+              </h2>
+              <button
+                onClick={() => setShowExtractSolutionsModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={extractSolutionsFormData.name}
+                  onChange={(e) => setExtractSolutionsFormData({ ...extractSolutionsFormData, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="Enter extraction name..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Source Type
+                </label>
+                <select
+                  value={extractSolutionsFormData.type}
+                  onChange={(e) => setExtractSolutionsFormData({ ...extractSolutionsFormData, type: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="Question Bank">Question Bank</option>
+                  <option value="Academic Book">Academic Book</option>
+                </select>
+              </div>
+
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Selected Items:</span>{' '}
+                  {selectedItems.length} item{selectedItems.length > 1 ? 's' : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 p-4 border-t">
+              <button
+                onClick={() => setShowExtractSolutionsModal(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitSolutionExtraction}
+                disabled={!extractSolutionsFormData.name.trim() || extractSolutionsMutation.isPending}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {extractSolutionsMutation.isPending ? 'Extracting...' : 'Start Extraction'}
               </button>
             </div>
           </div>

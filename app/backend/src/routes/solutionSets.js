@@ -39,7 +39,7 @@ router.get('/:id/status', asyncHandler(async (req, res) => {
 
 // Create solution set and start extraction
 router.post('/extract', asyncHandler(async (req, res) => {
-  const { item_ids, name, question_set_id } = req.body;
+  const { item_ids, name, type, question_set_id } = req.body;
 
   if (!item_ids || !Array.isArray(item_ids) || item_ids.length === 0) {
     return res.status(400).json({
@@ -48,8 +48,17 @@ router.post('/extract', asyncHandler(async (req, res) => {
     });
   }
 
+  // Validate type if provided
+  const validTypes = ['Question Bank', 'Academic Book'];
+  if (type && !validTypes.includes(type)) {
+    return res.status(400).json({
+      success: false,
+      error: `type must be one of: ${validTypes.join(', ')}`,
+    });
+  }
+
   // Create the solution set
-  const solutionSet = await solutionExtractionService.createSolutionSet(item_ids, { name, question_set_id });
+  const solutionSet = await solutionExtractionService.createSolutionSet(item_ids, { name, type, question_set_id });
 
   // Start extraction asynchronously (don't wait)
   solutionExtractionService.extractSolutions(solutionSet.id).catch((err) => {

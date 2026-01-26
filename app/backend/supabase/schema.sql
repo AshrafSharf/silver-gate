@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS question_sets (
     chapter_id UUID REFERENCES chapters(id) ON DELETE SET NULL,
     -- Array of scanned item IDs used to generate this question set (preserves selection order)
     source_item_ids UUID[] NOT NULL,
+    -- Source type determines which parsing instructions to use
+    source_type VARCHAR(50) DEFAULT 'Question Bank' CHECK (source_type IN ('Question Bank', 'Academic Book')),
     -- Extracted questions stored as JSONB
     -- Format: { "questions": [{ "text": "...", "choices": ["A. ...", "B. ...", ...] }] }
     questions JSONB NOT NULL DEFAULT '[]',
@@ -141,6 +143,7 @@ CREATE TABLE IF NOT EXISTS question_sets (
 CREATE INDEX IF NOT EXISTS idx_question_sets_book_id ON question_sets(book_id);
 CREATE INDEX IF NOT EXISTS idx_question_sets_chapter_id ON question_sets(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_question_sets_status ON question_sets(status);
+CREATE INDEX IF NOT EXISTS idx_question_sets_source_type ON question_sets(source_type);
 CREATE INDEX IF NOT EXISTS idx_question_sets_created_at ON question_sets(created_at DESC);
 
 -- ============================================
@@ -155,6 +158,8 @@ CREATE TABLE IF NOT EXISTS solution_sets (
     source_item_ids UUID[] NOT NULL,
     -- Optional link to a question set for matching solutions to questions
     question_set_id UUID REFERENCES question_sets(id) ON DELETE SET NULL,
+    -- Source type determines which parsing instructions to use
+    source_type VARCHAR(50) DEFAULT 'Question Bank' CHECK (source_type IN ('Question Bank', 'Academic Book')),
     -- Extracted solutions stored as JSONB
     -- Format: { "solutions": [{ "question_label": "1", "answer_key": "C", "worked_solution": "...", "explanation": "..." }] }
     solutions JSONB NOT NULL DEFAULT '[]',
@@ -175,6 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_solution_sets_book_id ON solution_sets(book_id);
 CREATE INDEX IF NOT EXISTS idx_solution_sets_chapter_id ON solution_sets(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_solution_sets_question_set_id ON solution_sets(question_set_id);
 CREATE INDEX IF NOT EXISTS idx_solution_sets_status ON solution_sets(status);
+CREATE INDEX IF NOT EXISTS idx_solution_sets_source_type ON solution_sets(source_type);
 CREATE INDEX IF NOT EXISTS idx_solution_sets_created_at ON solution_sets(created_at DESC);
 
 -- ============================================

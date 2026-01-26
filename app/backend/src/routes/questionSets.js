@@ -39,7 +39,7 @@ router.get('/:id/status', asyncHandler(async (req, res) => {
 
 // Create question set and start extraction
 router.post('/extract', asyncHandler(async (req, res) => {
-  const { item_ids, name } = req.body;
+  const { item_ids, name, type } = req.body;
 
   if (!item_ids || !Array.isArray(item_ids) || item_ids.length === 0) {
     return res.status(400).json({
@@ -48,8 +48,17 @@ router.post('/extract', asyncHandler(async (req, res) => {
     });
   }
 
+  // Validate type if provided
+  const validTypes = ['Question Bank', 'Academic Book'];
+  if (type && !validTypes.includes(type)) {
+    return res.status(400).json({
+      success: false,
+      error: `type must be one of: ${validTypes.join(', ')}`,
+    });
+  }
+
   // Create the question set
-  const questionSet = await questionExtractionService.createQuestionSet(item_ids, { name });
+  const questionSet = await questionExtractionService.createQuestionSet(item_ids, { name, type });
 
   // Start extraction asynchronously (don't wait)
   questionExtractionService.extractQuestions(questionSet.id).catch((err) => {

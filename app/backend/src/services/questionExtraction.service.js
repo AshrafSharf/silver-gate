@@ -4,8 +4,9 @@ import { config } from '../config/index.js';
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 
-// Parsing instructions for MCQ extraction
-const MCQ_PARSING_INSTRUCTIONS = `
+// Parsing instructions by source type
+const PARSING_INSTRUCTIONS = {
+  'Question Bank': `
 Extract all multiple choice questions (MCQs) from this document.
 
 For each question, identify:
@@ -30,13 +31,45 @@ Important:
 - Include all answer choices for each question
 - Maintain the original question numbering if present
 - If a question has sub-parts, treat each sub-part as a separate question with appropriate labels (e.g., "1a", "1b")
-`;
+`,
+  'Academic Book': `
+Extract all multiple choice questions (MCQs) from this document.
+
+For each question, identify:
+1. The question label/number as it appears in the document (e.g., "1", "2", "Q1", "Question 5", etc.)
+2. The question text (including any mathematical notation)
+3. All answer choices (labeled A, B, C, D, etc.)
+
+Return the result in the following JSON format:
+{
+  "questions": [
+    {
+      "question_label": "1",
+      "text": "Question text here with $math$ notation preserved",
+      "choices": ["A. choice1", "B. choice2", "C. choice3", "D. choice4"]
+    }
+  ]
+}
+
+Important:
+- Preserve the original question label/number exactly as it appears in the document
+- Preserve LaTeX math notation ($...$ and $$...$$)
+- Include all answer choices for each question
+- Maintain the original question numbering if present
+- If a question has sub-parts, treat each sub-part as a separate question with appropriate labels (e.g., "1a", "1b")
+`,
+};
+
+// Helper to get parsing instructions for a type
+const getParsingInstructions = (type) => {
+  return PARSING_INSTRUCTIONS[type] || PARSING_INSTRUCTIONS['Question Bank'];
+};
 
 export const questionExtractionService = {
   /**
    * Create a question set from selected scanned items
    * @param {string[]} itemIds - Array of scanned item IDs (in selection order)
-   * @param {object} options - Optional name and metadata
+   * @param {object} options - Optional name, type, and metadata
    * @returns {Promise<object>} - Created question set record
    */
   async createQuestionSet(itemIds, options = {}) {
@@ -66,6 +99,9 @@ export const questionExtractionService = {
     // Use book_id and chapter_id from first item
     const firstItem = items[0];
 
+    // Default type to 'Question Bank' if not provided
+    const sourceType = options.type || 'Question Bank';
+
     const { data, error } = await supabase
       .from('question_sets')
       .insert({
@@ -74,6 +110,7 @@ export const questionExtractionService = {
         chapter_id: firstItem.chapter_id,
         source_item_ids: itemIds,
         status: 'pending',
+        source_type: sourceType,
         metadata: options.metadata || {},
       })
       .select()
@@ -103,8 +140,9 @@ export const questionExtractionService = {
       const combinedContent = await this.combineLatexContent(questionSet.source_item_ids);
       console.log(`[EXTRACT] Combined LaTeX content size: ${Math.round(combinedContent.length / 1024)}KB`);
 
-      // Submit to LlamaParse
-      const jobId = await this.submitToLlamaParse(combinedContent);
+      // Submit to LlamaParse with type-specific instructions
+      const sourceType = questionSet.source_type || 'Question Bank';
+      const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
 
       // Store the job ID
       await supabase
@@ -195,15 +233,20 @@ export const questionExtractionService = {
   /**
    * Submit content to LlamaParse for question extraction
    * @param {string} content - Combined LaTeX/text content
+   * @param {string} sourceType - Source type ('Question Bank' or 'Academic Book')
    * @returns {Promise<string>} - Job ID from LlamaParse
    */
-  async submitToLlamaParse(content) {
+  async submitToLlamaParse(content, sourceType = 'Question Bank') {
     // Create a text file blob from the combined content
     const blob = new Blob([content], { type: 'text/plain' });
 
+    // Get parsing instructions based on source type
+    const parsingInstructions = getParsingInstructions(sourceType);
+    console.log(`[EXTRACT] Using parsing instructions for type: ${sourceType}`);
+
     const formData = new FormData();
     formData.append('file', blob, 'questions.txt');
-    formData.append('parsing_instruction', MCQ_PARSING_INSTRUCTIONS);
+    formData.append('parsing_instruction', parsingInstructions);
     formData.append('result_type', 'markdown');
     formData.append('premium_mode', 'true');
 
