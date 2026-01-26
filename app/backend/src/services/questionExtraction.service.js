@@ -7,56 +7,126 @@ const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 // Parsing instructions by source type
 const PARSING_INSTRUCTIONS = {
   'Question Bank': `
-Extract all multiple choice questions (MCQs) from this document.
+CRITICAL: Extract EVERY SINGLE question from this document with ALL their choices. Do NOT skip any questions or choices.
 
-For each question, identify:
-1. The question label/number as it appears in the document (e.g., "1", "2", "Q1", "Question 5", etc.)
-2. The question text (including any mathematical notation)
-3. All answer choices (labeled A, B, C, D, etc.)
+This document contains competitive exam questions (JEE, NEET, etc.). Extract ALL question types:
+- Single correct MCQs (one correct answer)
+- Multiple correct MCQs (one or more correct answers)
+- Numerical/Integer type questions (answer is a number, NO choices provided)
+- Paragraph/Comprehension based questions
+- Matrix match questions
+- Assertion-Reason questions
 
-Return the result in the following JSON format:
+CHOICE FORMATS - Look for these patterns on SEPARATE LINES after the question:
+- (a), (b), (c), (d) - lowercase with parentheses (MOST COMMON in JEE)
+- (A), (B), (C), (D) - uppercase with parentheses
+- A., B., C., D. or A), B), C), D)
+
+IMPORTANT - CHOICES CAN CONTAIN:
+- Simple numbers: (a) 2, (b) 12, (c) 4, (d) 6
+- Mathematical expressions: (a) $\\beta^{2}-2 \\sqrt{\\alpha}=\\frac{19}{4}$
+- Text with math: (a) Perimeter of $\\triangle ABC$ is $18\\sqrt{3}$
+- Fractions, square roots, matrices, determinants
+
+HOW TO IDENTIFY CHOICES:
+- Choices appear AFTER phrases like "is equal to", "then", "is", "are", "equals"
+- Each choice starts on a new line with (a), (b), (c), (d)
+- Choices end when the next question number appears OR document ends
+
+For EACH question, extract:
+1. question_label: The number EXACTLY as shown (e.g., "1", "10", "17")
+2. text: Complete question INCLUDING all math notation up to but NOT including the choices
+3. choices: Array of ALL 4 choices with their labels ["(a) ...", "(b) ...", "(c) ...", "(d) ..."]
+
+Return in JSON format:
 {
   "questions": [
     {
-      "question_label": "1",
-      "text": "Question text here with $math$ notation preserved",
-      "choices": ["A. choice1", "B. choice2", "C. choice3", "D. choice4"]
+      "question_label": "10",
+      "text": "Let S denote the set... is equal to",
+      "choices": ["(a) 2", "(b) 12", "(c) 4", "(d) 6"]
+    },
+    {
+      "question_label": "17",
+      "text": "Let $f(x)=...$. If $\\alpha$ and $\\beta$ respectively are the maximum and minimum values of $f$, then",
+      "choices": ["(a) $\\beta^{2}-2 \\sqrt{\\alpha}=\\frac{19}{4}$", "(b) $\\beta^{2}+2 \\sqrt{\\alpha}=\\frac{19}{4}$", "(c) $\\alpha^{2}-\\beta^{2}=4 \\sqrt{3}$", "(d) $\\alpha^{2}+\\beta^{2}=\\frac{9}{2}$"]
+    },
+    {
+      "question_label": "21",
+      "text": "Numerical question (no choices)",
+      "choices": []
     }
   ]
 }
 
-Important:
-- Preserve the original question label/number exactly as it appears in the document
-- Preserve LaTeX math notation ($...$ and $$...$$)
-- Include all answer choices for each question
-- Maintain the original question numbering if present
-- If a question has sub-parts, treat each sub-part as a separate question with appropriate labels (e.g., "1a", "1b")
+MANDATORY RULES:
+- Extract EVERY question from 1 to the last question number
+- For EACH MCQ (questions 1-20 typically), you MUST extract exactly 4 choices
+- Choices with mathematical expressions - preserve ALL LaTeX notation exactly
+- For questions ending with "is equal to", "then", etc. - the choices follow on next lines
+- Numerical/Integer type questions (usually 21-30) have NO choices - set choices to []
+- Preserve ALL LaTeX: $...$ and $$...$$ and special characters
+- Do NOT skip choices even if they contain complex math expressions
+- VERIFY: Every MCQ must have exactly 4 choices in the output
 `,
   'Academic Book': `
-Extract all multiple choice questions (MCQs) from this document.
+CRITICAL: Extract EVERY SINGLE question from this document with ALL their choices. Do NOT skip any questions or choices.
 
-For each question, identify:
-1. The question label/number as it appears in the document (e.g., "1", "2", "Q1", "Question 5", etc.)
-2. The question text (including any mathematical notation)
-3. All answer choices (labeled A, B, C, D, etc.)
+This is an academic textbook. Extract ALL types of questions including:
+- Multiple choice questions (MCQs)
+- Fill in the blanks
+- True/False questions
+- Short answer questions
+- Long answer questions
+- Numerical problems
+- Exercise questions
 
-Return the result in the following JSON format:
+CHOICE FORMATS - Look for these patterns on SEPARATE LINES after the question:
+- (a), (b), (c), (d) - lowercase with parentheses
+- (A), (B), (C), (D) - uppercase with parentheses
+- A., B., C., D. or A), B), C), D)
+- (i), (ii), (iii), (iv)
+
+IMPORTANT - CHOICES CAN CONTAIN:
+- Simple numbers or text
+- Mathematical expressions with LaTeX
+- Fractions, square roots, matrices, determinants
+- Mixed text and math
+
+HOW TO IDENTIFY CHOICES:
+- Choices appear AFTER phrases like "is equal to", "then", "is", "are", "equals", "find"
+- Each choice starts on a new line with (a), (b), (c), (d) or similar
+- Choices end when the next question number appears OR document ends
+
+For EACH question, extract:
+1. question_label: The number EXACTLY as shown
+2. text: Complete question INCLUDING all math notation up to but NOT including the choices
+3. choices: Array of ALL choices with their labels, or empty [] if no choices
+
+Return in JSON format:
 {
   "questions": [
     {
       "question_label": "1",
-      "text": "Question text here with $math$ notation preserved",
-      "choices": ["A. choice1", "B. choice2", "C. choice3", "D. choice4"]
+      "text": "Complete question text with $math$ preserved",
+      "choices": ["(a) choice1", "(b) choice2", "(c) choice3", "(d) choice4"]
+    },
+    {
+      "question_label": "2",
+      "text": "Question without choices",
+      "choices": []
     }
   ]
 }
 
-Important:
-- Preserve the original question label/number exactly as it appears in the document
-- Preserve LaTeX math notation ($...$ and $$...$$)
-- Include all answer choices for each question
-- Maintain the original question numbering if present
-- If a question has sub-parts, treat each sub-part as a separate question with appropriate labels (e.g., "1a", "1b")
+MANDATORY RULES:
+- Extract EVERY question - do not stop early or skip any
+- For EACH MCQ, you MUST extract ALL choices (typically 4)
+- Choices with mathematical expressions - preserve ALL LaTeX notation exactly
+- Questions may have blank lines between number and text - still extract them
+- Preserve ALL LaTeX: $...$ and $$...$$ exactly
+- Do NOT skip choices even if they contain complex math expressions
+- VERIFY: Every MCQ must have its choices in the output
 `,
 };
 
@@ -331,96 +401,172 @@ export const questionExtractionService = {
    */
   parseQuestionsFromContent(rawContent) {
     try {
+      console.log(`[EXTRACT] Starting to parse raw content of length: ${rawContent.length}`);
+
       // Find ALL JSON objects with "questions" arrays and merge them
       const allQuestions = [];
       let searchStart = 0;
+      let jsonBlockCount = 0;
 
       while (true) {
-        // Find next JSON object with questions
-        let jsonStart = rawContent.indexOf('{"questions"', searchStart);
+        // Find next JSON object with questions - try multiple patterns
+        let jsonStart = -1;
 
-        // Also try with whitespace variations
-        if (jsonStart === -1) {
-          const match = rawContent.substring(searchStart).match(/\{\s*"questions"\s*:\s*\[/);
-          if (match) {
-            jsonStart = searchStart + rawContent.substring(searchStart).indexOf(match[0]);
-          }
+        // Pattern 1: {"questions"
+        const pattern1 = rawContent.indexOf('{"questions"', searchStart);
+
+        // Pattern 2: { "questions" (with space)
+        const pattern2 = rawContent.indexOf('{ "questions"', searchStart);
+
+        // Pattern 3: Regex for various whitespace
+        const remainingContent = rawContent.substring(searchStart);
+        const regexMatch = remainingContent.match(/\{\s*"questions"\s*:\s*\[/);
+        const pattern3 = regexMatch ? searchStart + remainingContent.indexOf(regexMatch[0]) : -1;
+
+        // Take the earliest valid match
+        const validPatterns = [pattern1, pattern2, pattern3].filter(p => p !== -1);
+        if (validPatterns.length > 0) {
+          jsonStart = Math.min(...validPatterns);
         }
 
-        if (jsonStart === -1) break;
+        if (jsonStart === -1) {
+          console.log(`[EXTRACT] No more JSON blocks found after position ${searchStart}`);
+          break;
+        }
+
+        console.log(`[EXTRACT] Found potential JSON block at position ${jsonStart}`);
 
         // Find matching closing brace
         let braceCount = 0;
         let jsonEnd = -1;
+        let inString = false;
+        let escapeNext = false;
 
         for (let i = jsonStart; i < rawContent.length; i++) {
-          if (rawContent[i] === '{') braceCount++;
-          if (rawContent[i] === '}') braceCount--;
-          if (braceCount === 0) {
-            jsonEnd = i + 1;
-            break;
+          const char = rawContent[i];
+
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            continue;
+          }
+
+          if (!inString) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+            if (braceCount === 0) {
+              jsonEnd = i + 1;
+              break;
+            }
           }
         }
 
         if (jsonEnd !== -1) {
           const jsonStr = rawContent.substring(jsonStart, jsonEnd);
+          console.log(`[EXTRACT] Attempting to parse JSON block ${++jsonBlockCount}, length: ${jsonStr.length}`);
+
           try {
             const parsed = JSON.parse(jsonStr);
             if (parsed.questions && Array.isArray(parsed.questions)) {
-              console.log(`[EXTRACT] Found JSON block with ${parsed.questions.length} questions`);
+              console.log(`[EXTRACT] Successfully parsed JSON block ${jsonBlockCount} with ${parsed.questions.length} questions`);
               allQuestions.push(...parsed.questions);
+            } else {
+              console.log(`[EXTRACT] JSON block ${jsonBlockCount} does not have valid questions array`);
             }
           } catch (parseErr) {
-            console.error(`[EXTRACT] Failed to parse JSON block: ${parseErr.message}`);
+            console.error(`[EXTRACT] Failed to parse JSON block ${jsonBlockCount}: ${parseErr.message}`);
+            console.log(`[EXTRACT] JSON block preview: ${jsonStr.substring(0, 200)}...`);
           }
           searchStart = jsonEnd;
         } else {
-          break;
+          console.log(`[EXTRACT] Could not find closing brace for JSON block starting at ${jsonStart}`);
+          searchStart = jsonStart + 1;
         }
       }
 
       if (allQuestions.length > 0) {
-        console.log(`[EXTRACT] Total merged questions: ${allQuestions.length}`);
-        return { questions: allQuestions };
+        // Deduplicate questions by question_label
+        const uniqueQuestions = [];
+        const seenLabels = new Set();
+
+        for (const q of allQuestions) {
+          const label = q.question_label || '';
+          if (!seenLabels.has(label)) {
+            seenLabels.add(label);
+            uniqueQuestions.push(q);
+          } else {
+            console.log(`[EXTRACT] Skipping duplicate question with label: ${label}`);
+          }
+        }
+
+        console.log(`[EXTRACT] Total merged questions: ${allQuestions.length}, unique: ${uniqueQuestions.length}`);
+        return { questions: uniqueQuestions };
       }
+
+      console.log(`[EXTRACT] No JSON blocks found, attempting markdown/text parsing`);
 
       // If no JSON found, try to parse markdown format
       const questions = [];
-      const questionRegex = /(?:^|\n)((?:\d+[\.\)]\s*|Q(?:uestion)?[\s\.:]+\d*\s*))(.*?)(?=\n(?:\d+[\.\)]|Q(?:uestion)?[\s\.:]+\d*|\Z))/gis;
-      const choiceRegex = /\n\s*([A-E])[\.\)]\s*(.+)/gi;
 
-      let match;
-      let questionIndex = 1;
-      while ((match = questionRegex.exec(rawContent)) !== null) {
-        const questionLabelRaw = match[1] || '';
-        const questionBlock = match[0];
-        const choices = [];
+      // More comprehensive regex for question detection
+      const questionPatterns = [
+        /(?:^|\n)\s*(\d+)[\.\)]\s+(.+?)(?=\n\s*\d+[\.\)]|\n\s*$|$)/gis,
+        /(?:^|\n)\s*Q(?:uestion)?\.?\s*(\d+)[\.\:\)]\s*(.+?)(?=\n\s*Q(?:uestion)?\.?\s*\d+|\n\s*$|$)/gis,
+        /(?:^|\n)\s*\((\d+)\)\s+(.+?)(?=\n\s*\(\d+\)|\n\s*$|$)/gis,
+      ];
 
-        let choiceMatch;
-        while ((choiceMatch = choiceRegex.exec(questionBlock)) !== null) {
-          choices.push(`${choiceMatch[1]}. ${choiceMatch[2].trim()}`);
-        }
+      for (const regex of questionPatterns) {
+        let match;
+        while ((match = regex.exec(rawContent)) !== null) {
+          const questionLabel = match[1];
+          const questionBlock = match[2] || match[0];
 
-        if (choices.length > 0) {
-          // Extract question label (number/identifier)
-          const questionLabel = questionLabelRaw
-            .replace(/[\.\)\s:]+$/, '')
-            .trim() || String(questionIndex);
+          // Find choices in the question block - handle both (a), (b) and A., B. formats
+          const choices = [];
+
+          // Try lowercase format first: (a), (b), (c), (d)
+          const lowercaseChoiceRegex = /\(([a-d])\)\s*(.+?)(?=\n\s*\([a-d]\)|\n\s*\d+[\.\)]|\n\s*$|$)/gi;
+          let choiceMatch;
+          while ((choiceMatch = lowercaseChoiceRegex.exec(questionBlock)) !== null) {
+            choices.push(`(${choiceMatch[1]}) ${choiceMatch[2].trim()}`);
+          }
+
+          // If no lowercase choices found, try uppercase format: A., B., C., D. or (A), (B)
+          if (choices.length === 0) {
+            const uppercaseChoiceRegex = /(?:^|\n)\s*\(?([A-E])\)?[\.\)]\s*(.+?)(?=\n\s*\(?[A-E]\)?[\.\)]|\n\s*$|$)/gi;
+            while ((choiceMatch = uppercaseChoiceRegex.exec(questionBlock)) !== null) {
+              choices.push(`(${choiceMatch[1].toLowerCase()}) ${choiceMatch[2].trim()}`);
+            }
+          }
 
           // Extract question text (before choices)
-          const questionText = questionBlock
-            .split(/\n\s*[A-E][\.\)]/)[0]
-            .replace(/^\d+[\.\)]\s*/, '')
-            .replace(/^Q(?:uestion)?[\s\.:]+\d*\s*/i, '')
-            .trim();
+          let questionText = questionBlock;
+          if (choices.length > 0) {
+            // Split at first choice pattern
+            questionText = questionBlock.split(/\n\s*\(?[a-dA-E]\)?[\.\)]/i)[0].trim();
+          }
 
-          questions.push({
-            question_label: questionLabel,
-            text: questionText,
-            choices: choices,
-          });
+          if (questionText) {
+            questions.push({
+              question_label: questionLabel,
+              text: questionText.trim(),
+              choices: choices,
+            });
+          }
+        }
 
-          questionIndex++;
+        if (questions.length > 0) {
+          console.log(`[EXTRACT] Parsed ${questions.length} questions using markdown fallback`);
+          break;
         }
       }
 

@@ -101,7 +101,10 @@ export default function ScannedItemsPage() {
     if (activeJob?.data?.active_chapter_id && !selectedChapterId) {
       setSelectedChapterId(activeJob.data.active_chapter_id);
     }
-  }, [activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id]);
+    if (activeJob?.data?.active_item_type) {
+      setActiveTab(activeJob.data.active_item_type);
+    }
+  }, [activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id, activeJob?.data?.active_item_type]);
 
   // Add scanned item mutation
   const addItemMutation = useMutation({
