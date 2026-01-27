@@ -88,8 +88,8 @@ export const scannedItemService = {
   // Trigger MathPix conversion in background
   async triggerMathPixConversion(scannedItemId, itemData, scanType, contentBuffer = null) {
     try {
-      // Handle email attachments with BYTEA content
-      if (scanType === 'email_attachment' && contentBuffer) {
+      // Handle email attachments and file uploads with BYTEA content
+      if ((scanType === 'email_attachment' || scanType === 'file_upload') && contentBuffer) {
         const base64Content = contentBuffer.toString('base64');
         await mathpixService.convertPdfToLatex(base64Content, scannedItemId);
         return;
@@ -111,6 +111,46 @@ export const scannedItemService = {
     } catch (error) {
       logger.error('MATHPIX', `Conversion failed: ${error.message}`);
     }
+  },
+
+  // Create scanned item from uploaded file (uses active job)
+  async createWithFileUpload({ filename, buffer, mimetype }) {
+    // Get active job to get current book/chapter/item_type
+    const activeJob = await jobService.getActiveJob();
+
+    if (!activeJob) {
+      throw new Error('No active job configured. Please set an active book and chapter first.');
+    }
+
+    // Store the PDF content as base64 for the BYTEA field
+    const base64Content = buffer.toString('base64');
+
+    const { data, error } = await supabase
+      .from('scanned_items')
+      .insert({
+        book_id: activeJob.active_book_id,
+        chapter_id: activeJob.active_chapter_id,
+        item_type: activeJob.active_item_type || 'question',
+        item_data: filename,
+        content: base64Content,
+        scan_type: 'file_upload',
+        status: 'pending',
+        latex_conversion_status: 'pending',
+        metadata: { mimetype, size: buffer.length },
+      })
+      .select(`
+        *,
+        book:books(id, name, display_name),
+        chapter:chapters(id, name, display_name, chapter_number)
+      `)
+      .single();
+
+    if (error) throw error;
+
+    // Trigger MathPix conversion asynchronously with the buffer
+    this.triggerMathPixConversion(data.id, data.item_data, 'file_upload', buffer);
+
+    return data;
   },
 
   // Create with explicit book/chapter/item_type (override active job)

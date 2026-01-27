@@ -1,8 +1,25 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { scannedItemService } from '../services/index.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 
 const router = Router();
+
+// Configure multer for memory storage (files stored in buffer)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Only allow PDF files
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF files are allowed'), false);
+    }
+  },
+});
 
 // Get all scanned items (with optional filters)
 router.get('/', asyncHandler(async (req, res) => {
@@ -157,6 +174,21 @@ router.post('/manual', asyncHandler(async (req, res) => {
     chapter_id,
     item_type || 'question'
   );
+  res.status(201).json({ success: true, data: item });
+}));
+
+// Upload PDF file (uses active job's book/chapter)
+router.post('/upload', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, error: 'No PDF file uploaded' });
+  }
+
+  const item = await scannedItemService.createWithFileUpload({
+    filename: req.file.originalname,
+    buffer: req.file.buffer,
+    mimetype: req.file.mimetype,
+  });
+
   res.status(201).json({ success: true, data: item });
 }));
 

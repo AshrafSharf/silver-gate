@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil } from 'lucide-react';
+import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link } from 'lucide-react';
 import PDFViewerModal from '../components/PDFViewerModal';
 
 export default function ScannedItemsPage() {
@@ -11,6 +11,9 @@ export default function ScannedItemsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItemData, setNewItemData] = useState('');
   const [newScanType, setNewScanType] = useState('pdf');
+  const [uploadMode, setUploadMode] = useState('url'); // 'url' or 'file'
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Tab state for item type
   const [activeTab, setActiveTab] = useState('question');
@@ -106,7 +109,7 @@ export default function ScannedItemsPage() {
     }
   }, [activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id, activeJob?.data?.active_item_type]);
 
-  // Add scanned item mutation
+  // Add scanned item mutation (URL mode)
   const addItemMutation = useMutation({
     mutationFn: (data) => api.post('/scanned-items', data),
     onSuccess: () => {
@@ -114,6 +117,21 @@ export default function ScannedItemsPage() {
       setShowAddModal(false);
       setNewItemData('');
       setNewScanType('pdf');
+      setUploadMode('url');
+      setSelectedFile(null);
+    },
+  });
+
+  // Upload file mutation
+  const uploadFileMutation = useMutation({
+    mutationFn: (formData) => api.upload('/scanned-items/upload', formData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scannedItems'] });
+      setShowAddModal(false);
+      setNewItemData('');
+      setNewScanType('pdf');
+      setUploadMode('url');
+      setSelectedFile(null);
     },
   });
 
@@ -163,12 +181,41 @@ export default function ScannedItemsPage() {
   });
 
   const handleAddItem = () => {
-    if (newItemData.trim()) {
+    if (uploadMode === 'file' && selectedFile) {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      uploadFileMutation.mutate(formData);
+    } else if (uploadMode === 'url' && newItemData.trim()) {
       addItemMutation.mutate({
         item_data: newItemData,
         scan_type: newScanType,
       });
     }
+  };
+
+  const handleFileSelect = (file) => {
+    if (file && file.type === 'application/pdf') {
+      setSelectedFile(file);
+    } else if (file) {
+      alert('Please select a PDF file');
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    handleFileSelect(file);
   };
 
   const handleEditItem = (item) => {
@@ -272,15 +319,15 @@ export default function ScannedItemsPage() {
   const canViewPdf = (item) => {
     const scanType = item.scan_type?.toLowerCase();
     const itemData = item.item_data?.toLowerCase() || '';
-    // Allow viewing if scan_type is pdf/email_attachment, or if filename ends with .pdf
-    return scanType === 'pdf' || scanType === 'email_attachment' ||
+    // Allow viewing if scan_type is pdf/email_attachment/file_upload, or if filename ends with .pdf
+    return scanType === 'pdf' || scanType === 'email_attachment' || scanType === 'file_upload' ||
            itemData.endsWith('.pdf') || item.content;
   };
 
   // Get the PDF URL for viewing
   const getPdfUrl = (item) => {
     // For items with binary content or base64, use the backend endpoint
-    if (item.scan_type === 'email_attachment' || !item.item_data?.startsWith('http')) {
+    if (item.scan_type === 'email_attachment' || item.scan_type === 'file_upload' || !item.item_data?.startsWith('http')) {
       return `/api/scanned-items/${item.id}/pdf`;
     }
     // For URL-based PDFs, use the URL directly
@@ -652,42 +699,129 @@ export default function ScannedItemsPage() {
                 Add Scanned Item
               </h2>
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  setShowAddModal(false);
+                  setUploadMode('url');
+                  setSelectedFile(null);
+                }}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Item Data (PDF URL or content)
-                </label>
-                <textarea
-                  value={newItemData}
-                  onChange={(e) => setNewItemData(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows={4}
-                  placeholder="Enter PDF URL or scanned data..."
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Scan Type
-                </label>
-                <select
-                  value={newScanType}
-                  onChange={(e) => setNewScanType(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            {/* Upload Mode Tabs */}
+            <div className="border-b border-gray-200">
+              <nav className="flex">
+                <button
+                  onClick={() => setUploadMode('url')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 border-b-2 font-medium text-sm ${
+                    uploadMode === 'url'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
                 >
-                  <option value="pdf">PDF</option>
-                  <option value="image">Image</option>
-                  <option value="url">URL</option>
-                  <option value="text">Text</option>
-                </select>
-              </div>
+                  <Link className="w-4 h-4" />
+                  URL
+                </button>
+                <button
+                  onClick={() => setUploadMode('file')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 border-b-2 font-medium text-sm ${
+                    uploadMode === 'file'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <Upload className="w-4 h-4" />
+                  File Upload
+                </button>
+              </nav>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {uploadMode === 'url' ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Item Data (PDF URL or content)
+                    </label>
+                    <textarea
+                      value={newItemData}
+                      onChange={(e) => setNewItemData(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      rows={4}
+                      placeholder="Enter PDF URL or scanned data..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Scan Type
+                    </label>
+                    <select
+                      value={newScanType}
+                      onChange={(e) => setNewScanType(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="pdf">PDF</option>
+                      <option value="image">Image</option>
+                      <option value="url">URL</option>
+                      <option value="text">Text</option>
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Upload PDF File
+                  </label>
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                      isDragging
+                        ? 'border-blue-500 bg-blue-50'
+                        : selectedFile
+                        ? 'border-green-500 bg-green-50'
+                        : 'border-gray-300 hover:border-gray-400'
+                    }`}
+                  >
+                    {selectedFile ? (
+                      <div className="space-y-2">
+                        <FileText className="w-10 h-10 mx-auto text-green-600" />
+                        <p className="text-sm font-medium text-gray-800">{selectedFile.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                        <button
+                          onClick={() => setSelectedFile(null)}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Remove file
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Upload className="w-10 h-10 mx-auto text-gray-400" />
+                        <p className="text-sm text-gray-600">
+                          Drag and drop a PDF file here, or{' '}
+                          <label className="text-blue-600 hover:text-blue-800 cursor-pointer">
+                            browse
+                            <input
+                              type="file"
+                              accept="application/pdf"
+                              onChange={(e) => handleFileSelect(e.target.files[0])}
+                              className="hidden"
+                            />
+                          </label>
+                        </p>
+                        <p className="text-xs text-gray-500">PDF files only, up to 50MB</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="text-sm text-gray-600">
@@ -713,17 +847,30 @@ export default function ScannedItemsPage() {
 
             <div className="flex justify-end gap-3 p-4 border-t">
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  setShowAddModal(false);
+                  setUploadMode('url');
+                  setSelectedFile(null);
+                }}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800"
               >
                 Cancel
               </button>
               <button
                 onClick={handleAddItem}
-                disabled={!newItemData.trim() || addItemMutation.isPending}
+                disabled={
+                  (uploadMode === 'url' && !newItemData.trim()) ||
+                  (uploadMode === 'file' && !selectedFile) ||
+                  addItemMutation.isPending ||
+                  uploadFileMutation.isPending
+                }
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {addItemMutation.isPending ? 'Adding...' : 'Add Item'}
+                {addItemMutation.isPending || uploadFileMutation.isPending
+                  ? 'Adding...'
+                  : uploadMode === 'file'
+                  ? 'Upload File'
+                  : 'Add Item'}
               </button>
             </div>
           </div>
