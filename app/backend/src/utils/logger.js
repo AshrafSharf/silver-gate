@@ -39,6 +39,11 @@ const tagColors = {
   JOB: colors.blue,
   MATHPIX: colors.magenta,
   SCAN: colors.cyan,
+  MONGO: colors.green,
+  SYNC: colors.blue,
+  REVERSE_SYNC: colors.magenta,
+  LESSON_SYNC: colors.cyan,
+  LESSON_ITEM_SYNC: colors.cyan,
 };
 
 function getTimestamp() {
