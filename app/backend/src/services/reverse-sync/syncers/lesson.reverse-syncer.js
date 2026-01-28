@@ -76,72 +76,94 @@ class LessonReverseSyncer extends BaseReverseSyncer {
 
   /**
    * Override batchUpsert to handle unique index on (order, chapter, type)
-   * Deletes conflicting documents before upserting
+   * Only inserts new documents, skips existing ones
    */
   async batchUpsert(documents, stats) {
     if (documents.length === 0) return;
 
     const collection = getMongoConnection().collection(this.mongoCollection);
 
-    // Build delete operations for documents with same unique key but different _id
-    const deleteOperations = documents.map(doc => ({
-      deleteMany: {
-        filter: {
-          _id: { $ne: doc._id },
-          order: doc.order,
-          chapter: doc.chapter,
-          type: doc.type,
-        },
-      },
-    }));
-
     try {
-      // First, delete any conflicting documents
-      const deleteResult = await collection.bulkWrite(deleteOperations, { ordered: false });
-      if (deleteResult.deletedCount > 0) {
-        logger.info(this.logTag, `Deleted ${deleteResult.deletedCount} conflicting documents`);
+      // Check which documents already exist
+      const documentIds = documents.map(doc => doc._id);
+      const existingDocs = await collection.find(
+        { _id: { $in: documentIds } },
+        { projection: { _id: 1 } }
+      ).toArray();
+
+      const existingIds = new Set(existingDocs.map(doc => doc._id.toString()));
+
+      // Filter to only new documents
+      const newDocuments = documents.filter(doc => !existingIds.has(doc._id.toString()));
+      const skippedCount = documents.length - newDocuments.length;
+
+      if (skippedCount > 0) {
+        logger.info(this.logTag, `Skipping ${skippedCount} existing records`);
+        stats.skipped += skippedCount;
       }
-    } catch (error) {
-      logger.warn(this.logTag, `Delete conflicts error (continuing): ${error.message}`);
-    }
 
-    // Now do the upsert
-    const now = new Date();
-    const upsertOperations = documents.map(doc => {
-      const { _id, ...fieldsWithoutId } = doc;
-      return {
-        updateOne: {
-          filter: { _id },
-          update: {
-            $set: { ...fieldsWithoutId, updated_at: now },
-            $setOnInsert: { created_at: now },
+      if (newDocuments.length === 0) {
+        logger.info(this.logTag, `No new documents to insert in this batch`);
+        return;
+      }
+
+      // Build delete operations for documents with same unique key but different _id
+      // This handles the case where the unique index (order, chapter, type) might conflict
+      const deleteOperations = newDocuments.map(doc => ({
+        deleteMany: {
+          filter: {
+            _id: { $ne: doc._id },
+            order: doc.order,
+            chapter: doc.chapter,
+            type: doc.type,
           },
-          upsert: true,
         },
-      };
-    });
+      }));
 
-    try {
-      // Log what we're about to insert
-      logger.info(this.logTag, `Upserting to collection: ${this.mongoCollection}, DB: ${collection.dbName}`);
-      documents.forEach(doc => {
+      try {
+        // First, delete any conflicting documents
+        const deleteResult = await collection.bulkWrite(deleteOperations, { ordered: false });
+        if (deleteResult.deletedCount > 0) {
+          logger.info(this.logTag, `Deleted ${deleteResult.deletedCount} conflicting documents`);
+        }
+      } catch (error) {
+        logger.warn(this.logTag, `Delete conflicts error (continuing): ${error.message}`);
+      }
+
+      // Insert only new documents
+      const now = new Date();
+      const documentsToInsert = newDocuments.map(doc => ({
+        ...doc,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      logger.info(this.logTag, `Inserting to collection: ${this.mongoCollection}, DB: ${collection.dbName}`);
+      documentsToInsert.forEach(doc => {
         logger.info(this.logTag, `  Document _id: ${doc._id}, name: ${doc.name}`);
       });
 
-      const result = await collection.bulkWrite(upsertOperations, { ordered: false });
-      stats.inserted += result.upsertedCount;
-      stats.updated += result.modifiedCount;
-      stats.matched = (stats.matched || 0) + result.matchedCount;
-      logger.info(this.logTag, `Batch result - Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}, Matched: ${result.matchedCount}`);
+      const result = await collection.insertMany(documentsToInsert, { ordered: false });
+      stats.inserted += result.insertedCount;
+      logger.info(this.logTag, `Batch result - Inserted: ${result.insertedCount}, Skipped: ${skippedCount}`);
 
-      // Verify documents exist after upsert
-      const ids = documents.map(d => d._id);
+      // Verify documents exist after insert
+      const ids = newDocuments.map(d => d._id);
       const count = await collection.countDocuments({ _id: { $in: ids } });
-      logger.info(this.logTag, `Verification: ${count} of ${ids.length} documents found after upsert`);
+      logger.info(this.logTag, `Verification: ${count} of ${ids.length} documents found after insert`);
     } catch (error) {
-      logger.error(this.logTag, `Batch upsert error: ${error.message}`);
-      logger.error(this.logTag, `Stack: ${error.stack}`);
-      stats.errors += documents.length;
+      // Handle duplicate key errors gracefully (in case of race conditions)
+      if (error.code === 11000) {
+        logger.warn(this.logTag, `Some documents already exist (duplicate key), continuing...`);
+        // Count successful inserts
+        const successCount = error.result?.insertedCount || 0;
+        stats.inserted += successCount;
+        stats.skipped += (documents.length - successCount);
+      } else {
+        logger.error(this.logTag, `Batch insert error: ${error.message}`);
+        logger.error(this.logTag, `Stack: ${error.stack}`);
+        stats.errors += documents.length;
+      }
     }
   }
 }

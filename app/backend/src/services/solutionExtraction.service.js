@@ -560,6 +560,66 @@ export const solutionExtractionService = {
   },
 
   /**
+   * Fix invalid escape sequences in JSON string (LlamaParse bug workaround)
+   * LlamaParse returns LaTeX with single backslashes in JSON strings (\wedge, \sim, etc.)
+   * These need to be escaped as \\ for valid JSON
+   * @param {string} jsonStr - JSON string potentially containing invalid escape sequences
+   * @returns {string} - Fixed JSON string
+   */
+  fixInvalidEscapeSequences(jsonStr) {
+    let fixCount = 0;
+    let result = '';
+    let i = 0;
+
+    while (i < jsonStr.length) {
+      // Look for the start of a string value
+      if (jsonStr[i] === '"') {
+        result += '"';
+        i++;
+
+        // Process the content of the string until we find the closing quote
+        while (i < jsonStr.length) {
+          const char = jsonStr[i];
+
+          if (char === '\\' && i + 1 < jsonStr.length) {
+            const nextChar = jsonStr[i + 1];
+
+            // Check if this is a valid JSON escape sequence
+            // Valid: \" \\ \/ \b \f \n \r \t \uXXXX
+            if ('"\\/bfnrtu'.includes(nextChar)) {
+              // Valid escape - keep as is
+              result += char + nextChar;
+              i += 2;
+            } else {
+              // Invalid escape - double the backslash
+              result += '\\\\' + nextChar;
+              fixCount++;
+              i += 2;
+            }
+          } else if (char === '"') {
+            // Found unescaped closing quote - end of string
+            result += '"';
+            i++;
+            break;
+          } else {
+            result += char;
+            i++;
+          }
+        }
+      } else {
+        result += jsonStr[i];
+        i++;
+      }
+    }
+
+    if (fixCount > 0) {
+      console.log(`[SOLUTION_EXTRACT] Fixed ${fixCount} invalid escape sequences in JSON`);
+    }
+
+    return result;
+  },
+
+  /**
    * Parse extracted content into solution JSON format
    * @param {string} rawContent - Raw extracted content from LlamaParse
    * @returns {object} - Structured solutions object
@@ -649,7 +709,23 @@ export const solutionExtractionService = {
             }
           } catch (parseErr) {
             console.error(`[SOLUTION_EXTRACT] Failed to parse JSON block ${jsonBlockCount}: ${parseErr.message}`);
-            console.log(`[SOLUTION_EXTRACT] JSON block preview: ${jsonStr.substring(0, 200)}...`);
+            console.log(`[SOLUTION_EXTRACT] Attempting to fix invalid escape sequences and retry...`);
+
+            try {
+              // Fix invalid escape sequences (LlamaParse bug workaround)
+              const fixedJsonStr = this.fixInvalidEscapeSequences(jsonStr);
+              const parsed = JSON.parse(fixedJsonStr);
+
+              if (parsed.solutions && Array.isArray(parsed.solutions)) {
+                console.log(`[SOLUTION_EXTRACT] ✅ Successfully parsed JSON block ${jsonBlockCount} after fixing escape sequences (${parsed.solutions.length} solutions)`);
+                allSolutions.push(...parsed.solutions);
+              } else {
+                console.log(`[SOLUTION_EXTRACT] JSON block ${jsonBlockCount} does not have valid solutions array after fix`);
+              }
+            } catch (retryErr) {
+              console.error(`[SOLUTION_EXTRACT] Failed to parse JSON block ${jsonBlockCount} even after fixing escape sequences: ${retryErr.message}`);
+              console.log(`[SOLUTION_EXTRACT] JSON block preview: ${jsonStr.substring(0, 200)}...`);
+            }
           }
           searchStart = jsonEnd;
         } else {

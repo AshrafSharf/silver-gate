@@ -26,25 +26,21 @@ async function main() {
 
     if (results.lessons) {
       console.log('Lessons → Exercises:');
-      console.log(`  Total:    ${results.lessons.total}`);
-      console.log(`  Inserted: ${results.lessons.inserted}`);
-      console.log(`  Updated:  ${results.lessons.updated}`);
-      console.log(`  Matched:  ${results.lessons.matched || 0}`);
-      console.log(`  Skipped:  ${results.lessons.skipped}`);
-      console.log(`  Errors:   ${results.lessons.errors}`);
-      console.log(`  Duration: ${results.lessons.duration}`);
+      console.log(`  Total:             ${results.lessons.total}`);
+      console.log(`  Inserted (new):    ${results.lessons.inserted}`);
+      console.log(`  Skipped (exists):  ${results.lessons.skipped}`);
+      console.log(`  Errors:            ${results.lessons.errors}`);
+      console.log(`  Duration:          ${results.lessons.duration}`);
       console.log('');
     }
 
     if (results.lessonItems) {
       console.log('Lesson Items → Exercise Items:');
-      console.log(`  Total:    ${results.lessonItems.total}`);
-      console.log(`  Inserted: ${results.lessonItems.inserted}`);
-      console.log(`  Updated:  ${results.lessonItems.updated}`);
-      console.log(`  Matched:  ${results.lessonItems.matched || 0}`);
-      console.log(`  Skipped:  ${results.lessonItems.skipped}`);
-      console.log(`  Errors:   ${results.lessonItems.errors}`);
-      console.log(`  Duration: ${results.lessonItems.duration}`);
+      console.log(`  Total:             ${results.lessonItems.total}`);
+      console.log(`  Inserted (new):    ${results.lessonItems.inserted}`);
+      console.log(`  Skipped (exists):  ${results.lessonItems.skipped}`);
+      console.log(`  Errors:            ${results.lessonItems.errors}`);
+      console.log(`  Duration:          ${results.lessonItems.duration}`);
       console.log('');
     }
 

@@ -305,22 +305,44 @@ router.post('/create-folders', asyncHandler(async (req, res) => {
       // Create folders for each lesson item directly in basePath
       for (const item of lesson.lesson_items || []) {
         const questionLabel = item.question_label || item.position || 'unknown';
-        const itemFolderName = `question_${questionLabel}`;
-        const itemFolderPath = path.join(trimmedBasePath, itemFolderName);
 
-        // Check if the folder already exists
+        // Check for both naming patterns: question-1 (hyphen) and question_1 (underscore)
+        // Priority: hyphen format (existing folders), then underscore format (new folders)
+        const itemFolderNameHyphen = `question-${questionLabel}`;
+        const itemFolderNameUnderscore = `question_${questionLabel}`;
+        const itemFolderPathHyphen = path.join(trimmedBasePath, itemFolderNameHyphen);
+        const itemFolderPathUnderscore = path.join(trimmedBasePath, itemFolderNameUnderscore);
+
+        // Check if folder exists (check hyphen format first)
         let folderExists = false;
+        let itemFolderName = itemFolderNameHyphen;
+        let itemFolderPath = itemFolderPathHyphen;
+
         try {
-          await fs.access(itemFolderPath);
+          await fs.access(itemFolderPathHyphen);
           folderExists = true;
+          itemFolderName = itemFolderNameHyphen;
+          itemFolderPath = itemFolderPathHyphen;
         } catch {
-          folderExists = false;
+          // Try underscore format
+          try {
+            await fs.access(itemFolderPathUnderscore);
+            folderExists = true;
+            itemFolderName = itemFolderNameUnderscore;
+            itemFolderPath = itemFolderPathUnderscore;
+          } catch {
+            // Neither exists, use hyphen format for new folders
+            folderExists = false;
+            itemFolderName = itemFolderNameHyphen;
+            itemFolderPath = itemFolderPathHyphen;
+          }
         }
 
         const filesCreated = [];
 
         if (folderExists) {
-          // Folder exists - only update empty.txt files
+          // Folder exists - only update empty.txt files in root and all subfolders
+          // Update root empty.txt
           await fs.writeFile(
             path.join(itemFolderPath, 'empty.txt'),
             item.ref_id || '',
@@ -328,7 +350,24 @@ router.post('/create-folders', asyncHandler(async (req, res) => {
           );
           filesCreated.push('empty.txt');
 
-          // Update step_solutions/empty.txt (create folder if needed)
+          // Find all subfolders and update their empty.txt files
+          try {
+            const entries = await fs.readdir(itemFolderPath, { withFileTypes: true });
+            const subfolders = entries.filter(entry => entry.isDirectory());
+
+            for (const subfolder of subfolders) {
+              const subfolderPath = path.join(itemFolderPath, subfolder.name);
+              const emptyTxtPath = path.join(subfolderPath, 'empty.txt');
+
+              // Update or create empty.txt in subfolder
+              await fs.writeFile(emptyTxtPath, item.ref_id || '', 'utf-8');
+              filesCreated.push(`${subfolder.name}/empty.txt`);
+            }
+          } catch (err) {
+            console.warn(`Could not scan subfolders in ${itemFolderPath}:`, err.message);
+          }
+
+          // Ensure step_solutions folder exists with empty.txt (in case it's a new subfolder)
           const stepSolutionsPath = path.join(itemFolderPath, 'step_solutions');
           await fs.mkdir(stepSolutionsPath, { recursive: true });
           await fs.writeFile(
@@ -336,7 +375,10 @@ router.post('/create-folders', asyncHandler(async (req, res) => {
             item.ref_id || '',
             'utf-8'
           );
-          filesCreated.push('step_solutions/empty.txt');
+          // Only add to filesCreated if not already added by the scan above
+          if (!filesCreated.includes('step_solutions/empty.txt')) {
+            filesCreated.push('step_solutions/empty.txt');
+          }
         } else {
           // Folder doesn't exist - create everything
           await fs.mkdir(itemFolderPath, { recursive: true });

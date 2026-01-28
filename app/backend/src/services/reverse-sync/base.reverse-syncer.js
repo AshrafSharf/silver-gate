@@ -64,38 +64,61 @@ export class BaseReverseSyncer {
   }
 
   /**
-   * Batch upsert documents to MongoDB
+   * Batch insert documents to MongoDB (skip existing records)
    */
   async batchUpsert(documents, stats) {
     if (documents.length === 0) return;
 
     const collection = getMongoConnection().collection(this.mongoCollection);
 
-    const now = new Date();
-    const operations = documents.map(doc => {
-      const { _id, ...fieldsWithoutId } = doc;
-      return {
-        updateOne: {
-          filter: { _id },
-          update: {
-            $set: { ...fieldsWithoutId, updated_at: now },
-            $setOnInsert: { created_at: now },
-          },
-          upsert: true,
-        },
-      };
-    });
-
     try {
-      const result = await collection.bulkWrite(operations, { ordered: false });
-      stats.inserted += result.upsertedCount;
-      stats.updated += result.modifiedCount;
-      stats.matched = (stats.matched || 0) + result.matchedCount;
-      logger.info(this.logTag, `Batch result - Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}, Matched: ${result.matchedCount}`);
+      // Check which documents already exist
+      const documentIds = documents.map(doc => doc._id);
+      const existingDocs = await collection.find(
+        { _id: { $in: documentIds } },
+        { projection: { _id: 1 } }
+      ).toArray();
+
+      const existingIds = new Set(existingDocs.map(doc => doc._id.toString()));
+
+      // Filter to only new documents
+      const newDocuments = documents.filter(doc => !existingIds.has(doc._id.toString()));
+      const skippedCount = documents.length - newDocuments.length;
+
+      if (skippedCount > 0) {
+        logger.info(this.logTag, `Skipping ${skippedCount} existing records`);
+        stats.skipped += skippedCount;
+      }
+
+      if (newDocuments.length === 0) {
+        logger.info(this.logTag, `No new documents to insert in this batch`);
+        return;
+      }
+
+      // Insert only new documents
+      const now = new Date();
+      const documentsToInsert = newDocuments.map(doc => ({
+        ...doc,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      const result = await collection.insertMany(documentsToInsert, { ordered: false });
+      stats.inserted += result.insertedCount;
+      logger.info(this.logTag, `Batch result - Inserted: ${result.insertedCount}, Skipped: ${skippedCount}`);
     } catch (error) {
-      logger.error(this.logTag, `Batch upsert error: ${error.message}`);
-      logger.error(this.logTag, `Stack: ${error.stack}`);
-      stats.errors += documents.length;
+      // Handle duplicate key errors gracefully (in case of race conditions)
+      if (error.code === 11000) {
+        logger.warn(this.logTag, `Some documents already exist (duplicate key), continuing...`);
+        // Count successful inserts
+        const successCount = error.result?.insertedCount || 0;
+        stats.inserted += successCount;
+        stats.skipped += (documents.length - successCount);
+      } else {
+        logger.error(this.logTag, `Batch insert error: ${error.message}`);
+        logger.error(this.logTag, `Stack: ${error.stack}`);
+        stats.errors += documents.length;
+      }
     }
   }
 
@@ -187,7 +210,7 @@ export class BaseReverseSyncer {
       }
 
       finalizeStats(stats);
-      logger.success(this.logTag, `Sync complete - Inserted: ${stats.inserted}, Updated: ${stats.updated}, Skipped: ${stats.skipped}, Errors: ${stats.errors}, Duration: ${stats.duration}`);
+      logger.success(this.logTag, `Sync complete - Inserted: ${stats.inserted}, Skipped (existing): ${stats.skipped}, Errors: ${stats.errors}, Duration: ${stats.duration}`);
 
       return stats;
     } catch (error) {
