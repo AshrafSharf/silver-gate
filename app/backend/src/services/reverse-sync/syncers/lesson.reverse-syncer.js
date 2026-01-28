@@ -68,6 +68,7 @@ class LessonReverseSyncer extends BaseReverseSyncer {
       parent_section_name: item.parent_section_name,
       toc_output_json: item.toc_output_json,
       toc_status: 'COMPLETED',
+      toc_prompt: item.name,
       type: 'EXAMPLE',
       book: bookRefId ? toDBRef('book', bookRefId) : null,
       chapter: chapterRefId ? toDBRef('chapter', chapterRefId) : null,
