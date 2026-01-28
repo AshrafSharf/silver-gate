@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../../config/database.js';
 import { BaseReverseSyncer } from '../base.reverse-syncer.js';
 import { toObjectId, toDBRef } from '../helpers.js';
+import logger from '../../../utils/logger.js';
 
 class LessonItemReverseSyncer extends BaseReverseSyncer {
   constructor() {
@@ -31,6 +32,7 @@ class LessonItemReverseSyncer extends BaseReverseSyncer {
       }
     }
 
+    logger.info(this.logTag, `Loaded ${Object.keys(context.lessonRefIds).length} lesson ref_id mappings from ${lessons?.length || 0} lessons`);
     return context;
   }
 
@@ -49,10 +51,11 @@ class LessonItemReverseSyncer extends BaseReverseSyncer {
       _id: toObjectId(item.ref_id),
       exercise: toDBRef('exercise', lessonRefId),
       question: item.problem_statement,
-      index: item.question_label,
+      index: item.index,
       display_order: item.question_label,
       question_label: item.question_label,
       question_type: item.question_type,
+      question_solution_item_json: item.question_solution_item_json,
     };
   }
 }

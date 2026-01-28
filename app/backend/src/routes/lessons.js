@@ -1,8 +1,61 @@
 import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
+import https from 'https';
+import http from 'http';
 import { lessonsService } from '../services/index.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
+
+/**
+ * Download an image from a URL and save it to a file
+ * @param {string} imageUrl - URL of the image to download
+ * @param {string} destPath - Destination file path
+ * @returns {Promise<boolean>} - True if successful, false otherwise
+ */
+async function downloadImage(imageUrl, destPath) {
+  return new Promise((resolve) => {
+    try {
+      const protocol = imageUrl.startsWith('https') ? https : http;
+
+      protocol.get(imageUrl, (response) => {
+        // Handle redirects
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          downloadImage(response.headers.location, destPath).then(resolve);
+          return;
+        }
+
+        if (response.statusCode !== 200) {
+          console.error(`Failed to download image: HTTP ${response.statusCode}`);
+          resolve(false);
+          return;
+        }
+
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', async () => {
+          try {
+            const buffer = Buffer.concat(chunks);
+            await fs.writeFile(destPath, buffer);
+            resolve(true);
+          } catch (err) {
+            console.error(`Failed to write image: ${err.message}`);
+            resolve(false);
+          }
+        });
+        response.on('error', (err) => {
+          console.error(`Download error: ${err.message}`);
+          resolve(false);
+        });
+      }).on('error', (err) => {
+        console.error(`Request error: ${err.message}`);
+        resolve(false);
+      });
+    } catch (err) {
+      console.error(`Download exception: ${err.message}`);
+      resolve(false);
+    }
+  });
+}
 
 const router = Router();
 
@@ -279,12 +332,37 @@ router.post('/create-folders', asyncHandler(async (req, res) => {
           'utf-8'
         );
 
+        const filesCreated = ['empty.txt', 'problem_statement.txt', 'solution_context.txt'];
+
+        // Download visual.png if visual_path exists in the JSON
+        const visualPath = item.question_solution_item_json?.visual_path;
+        if (visualPath && typeof visualPath === 'string' && visualPath.trim()) {
+          const visualDestPath = path.join(itemFolderPath, 'visual.png');
+          const downloaded = await downloadImage(visualPath.trim(), visualDestPath);
+          if (downloaded) {
+            filesCreated.push('visual.png');
+          }
+        }
+
+        // Create step_solutions subfolder
+        const stepSolutionsPath = path.join(itemFolderPath, 'step_solutions');
+        await fs.mkdir(stepSolutionsPath, { recursive: true });
+
+        // Create empty.txt inside step_solutions with the same ref_id content
+        await fs.writeFile(
+          path.join(stepSolutionsPath, 'empty.txt'),
+          item.ref_id || '',
+          'utf-8'
+        );
+
+        filesCreated.push('step_solutions/empty.txt');
+
         createdFolders.push({
           folder: itemFolderName,
           path: itemFolderPath,
           questionLabel,
           lessonName: lesson.name,
-          files: ['empty.txt', 'problem_statement.txt', 'solution_context.txt'],
+          files: filesCreated,
         });
 
         itemsCreated++;

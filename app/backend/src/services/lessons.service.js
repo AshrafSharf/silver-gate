@@ -16,7 +16,7 @@ export const lessonsService = {
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
         solution_set:solution_sets(id, name),
-        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position)
+        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position, index)
       `)
       .order('created_at', { ascending: false });
 
@@ -56,7 +56,7 @@ export const lessonsService = {
         chapter:chapters(id, name, display_name, chapter_number),
         question_set:question_sets(id, name),
         solution_set:solution_sets(id, name),
-        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position)
+        lesson_items(id, ref_id, question_label, problem_statement, solution_context, question_solution_item_json, position, index)
       `)
       .eq('id', id)
       .single();
@@ -401,6 +401,7 @@ export const lessonsService = {
           position: index,
           ref_id: generateMongoId(),
           question_type: lessonQuestionType || question_type,
+          index: String(index + 1),
         };
       });
 

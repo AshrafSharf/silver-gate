@@ -17,7 +17,8 @@ export async function connectToMongoDB() {
   try {
     await mongoose.connect(config.mongodb.uri);
     isConnected = true;
-    logger.success('MONGO', 'Connected to MongoDB');
+    const dbName = mongoose.connection.db?.databaseName || 'unknown';
+    logger.success('MONGO', `Connected to MongoDB - Database: ${dbName}`);
   } catch (error) {
     logger.error('MONGO', `Failed to connect to MongoDB: ${error.message}`);
     throw error;

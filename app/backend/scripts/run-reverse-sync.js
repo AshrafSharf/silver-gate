@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ override: true });
 import reverseSyncService from '../src/services/reverse-sync/index.js';
 
 async function main() {
@@ -9,6 +10,9 @@ async function main() {
   console.log('║     lessons → exercise                           ║');
   console.log('║     lesson_items → exercise_item                 ║');
   console.log('╚══════════════════════════════════════════════════╝');
+  console.log('');
+  console.log('Supabase URL:', process.env.SUPABASE_URL);
+  console.log('MongoDB URI: ', process.env.MONGODB_URI);
   console.log('');
 
   try {
@@ -25,6 +29,7 @@ async function main() {
       console.log(`  Total:    ${results.lessons.total}`);
       console.log(`  Inserted: ${results.lessons.inserted}`);
       console.log(`  Updated:  ${results.lessons.updated}`);
+      console.log(`  Matched:  ${results.lessons.matched || 0}`);
       console.log(`  Skipped:  ${results.lessons.skipped}`);
       console.log(`  Errors:   ${results.lessons.errors}`);
       console.log(`  Duration: ${results.lessons.duration}`);
@@ -36,6 +41,7 @@ async function main() {
       console.log(`  Total:    ${results.lessonItems.total}`);
       console.log(`  Inserted: ${results.lessonItems.inserted}`);
       console.log(`  Updated:  ${results.lessonItems.updated}`);
+      console.log(`  Matched:  ${results.lessonItems.matched || 0}`);
       console.log(`  Skipped:  ${results.lessonItems.skipped}`);
       console.log(`  Errors:   ${results.lessonItems.errors}`);
       console.log(`  Duration: ${results.lessonItems.duration}`);

@@ -71,20 +71,30 @@ export class BaseReverseSyncer {
 
     const collection = getMongoConnection().collection(this.mongoCollection);
 
-    const operations = documents.map(doc => ({
-      updateOne: {
-        filter: { _id: doc._id },
-        update: { $set: doc },
-        upsert: true,
-      },
-    }));
+    const now = new Date();
+    const operations = documents.map(doc => {
+      const { _id, ...fieldsWithoutId } = doc;
+      return {
+        updateOne: {
+          filter: { _id },
+          update: {
+            $set: { ...fieldsWithoutId, updated_at: now },
+            $setOnInsert: { created_at: now },
+          },
+          upsert: true,
+        },
+      };
+    });
 
     try {
       const result = await collection.bulkWrite(operations, { ordered: false });
       stats.inserted += result.upsertedCount;
       stats.updated += result.modifiedCount;
+      stats.matched = (stats.matched || 0) + result.matchedCount;
+      logger.info(this.logTag, `Batch result - Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}, Matched: ${result.matchedCount}`);
     } catch (error) {
       logger.error(this.logTag, `Batch upsert error: ${error.message}`);
+      logger.error(this.logTag, `Stack: ${error.stack}`);
       stats.errors += documents.length;
     }
   }
@@ -130,10 +140,14 @@ export class BaseReverseSyncer {
 
       // Transform and batch upsert
       let batch = [];
+      let skippedNoRefId = 0;
+      let skippedNullTransform = 0;
+
       for (const item of supabaseData) {
         try {
           // Skip items without ref_id
           if (!item.ref_id) {
+            skippedNoRefId++;
             stats.skipped++;
             continue;
           }
@@ -142,6 +156,7 @@ export class BaseReverseSyncer {
           if (document) {
             batch.push(document);
           } else {
+            skippedNullTransform++;
             stats.skipped++;
           }
 
@@ -151,14 +166,24 @@ export class BaseReverseSyncer {
             logProgress(logger, this.logTag, 'Progress', stats);
           }
         } catch (error) {
-          logger.error(this.logTag, `Error transforming item ${item.id}: ${error.message}`);
+          logger.error(this.logTag, `Error transforming item ${item.id} (ref_id: ${item.ref_id}): ${error.message}`);
+          logger.error(this.logTag, `Stack: ${error.stack}`);
           stats.errors++;
         }
       }
 
       // Process remaining batch
+      logger.info(this.logTag, `Batch size before final upsert: ${batch.length}`);
       if (batch.length > 0) {
         await this.batchUpsert(batch, stats);
+      }
+
+      logger.info(this.logTag, `Skipped stats - No ref_id: ${skippedNoRefId}, Null transform: ${skippedNullTransform}`);
+      if (skippedNoRefId > 0) {
+        logger.warn(this.logTag, `Skipped ${skippedNoRefId} items with no ref_id`);
+      }
+      if (skippedNullTransform > 0) {
+        logger.warn(this.logTag, `Skipped ${skippedNullTransform} items with null transform result`);
       }
 
       finalizeStats(stats);

@@ -245,6 +245,9 @@ export default function LessonsPage() {
                     Name
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Section
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Range
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -288,6 +291,9 @@ export default function LessonsPage() {
                         <BookOpen className="w-5 h-5 text-green-500 mr-3 flex-shrink-0" />
                         <span className="text-sm font-medium text-gray-900 truncate" title={lesson.name}>{lesson.name}</span>
                       </div>
+                    </td>
+                    <td className="px-6 py-4 max-w-xs">
+                      <span className="text-sm text-gray-600 truncate" title={lesson.common_parent_section_name}>{lesson.common_parent_section_name || '-'}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="text-sm text-gray-600">{lesson.question_range || '-'}</span>
