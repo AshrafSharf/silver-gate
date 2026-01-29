@@ -37,6 +37,11 @@ export const config = {
   mongodb: {
     uri: process.env.MONGODB_URI,
   },
+  gemini: {
+    apiKey: process.env.GOOGLE_API_KEY,
+    apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+    model: 'gemini-2.0-flash',
+  },
 };
 
 export default config;

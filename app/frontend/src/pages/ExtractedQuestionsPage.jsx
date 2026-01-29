@@ -139,26 +139,26 @@ export default function ExtractedQuestionsPage() {
           <p className="text-gray-400 text-sm mt-1">Extract questions from scanned items to see them here</p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        <div className="bg-white rounded-lg shadow-sm border overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                   Name
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">
                   Book / Chapter
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
                   Questions
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">
                   Created
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                   Actions
                 </th>
               </tr>
@@ -170,41 +170,43 @@ export default function ExtractedQuestionsPage() {
                   className="hover:bg-gray-50 cursor-pointer"
                   onClick={() => setSelectedSet(set)}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4">
                     <div className="flex items-center">
-                      <FileQuestion className="w-5 h-5 text-blue-500 mr-3" />
-                      <span className="text-sm font-medium text-gray-900">{set.name}</span>
+                      <FileQuestion className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0" />
+                      <span className="text-sm font-medium text-gray-900 truncate max-w-[200px]" title={set.name}>
+                        {set.name}
+                      </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">
+                  <td className="px-4 py-4">
+                    <div className="text-sm text-gray-500 truncate max-w-[180px]" title={`${set.book?.display_name || '-'}${set.chapter?.display_name ? ` / ${set.chapter.display_name}` : ''}`}>
                       {set.book?.display_name || '-'}
                       {set.chapter?.display_name && ` / ${set.chapter.display_name}`}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <span className="text-sm text-gray-900">{set.total_questions || 0}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     {getStatusBadge(set.status)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(set.created_at).toLocaleString()}
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(set.created_at).toLocaleDateString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                  <td className="px-4 py-4 whitespace-nowrap text-right">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedSet(set);
                       }}
-                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg mr-2"
+                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg mr-1"
                       title="View"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
                       onClick={(e) => handleDelete(e, set.id, set.name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
                       title="Delete"
                     >
                       <Trash2 className="w-4 h-4" />

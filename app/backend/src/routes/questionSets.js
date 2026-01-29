@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { questionExtractionService } from '../services/index.js';
+import { questionExtractionService, EXTRACTION_PROVIDERS } from '../services/index.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 
 const router = Router();
@@ -39,7 +39,7 @@ router.get('/:id/status', asyncHandler(async (req, res) => {
 
 // Create question set and start extraction
 router.post('/extract', asyncHandler(async (req, res) => {
-  const { item_ids, name, type } = req.body;
+  const { item_ids, name, type, provider } = req.body;
 
   if (!item_ids || !Array.isArray(item_ids) || item_ids.length === 0) {
     return res.status(400).json({
@@ -57,11 +57,21 @@ router.post('/extract', asyncHandler(async (req, res) => {
     });
   }
 
+  // Validate provider if provided
+  const validProviders = Object.values(EXTRACTION_PROVIDERS);
+  const extractionProvider = provider || EXTRACTION_PROVIDERS.LLAMAPARSE;
+  if (provider && !validProviders.includes(provider)) {
+    return res.status(400).json({
+      success: false,
+      error: `provider must be one of: ${validProviders.join(', ')}`,
+    });
+  }
+
   // Create the question set
   const questionSet = await questionExtractionService.createQuestionSet(item_ids, { name, type });
 
   // Start extraction asynchronously (don't wait)
-  questionExtractionService.extractQuestions(questionSet.id).catch((err) => {
+  questionExtractionService.extractQuestions(questionSet.id, extractionProvider).catch((err) => {
     console.error('Extraction error:', err);
   });
 

@@ -4,6 +4,17 @@ import { config } from '../config/index.js';
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 
+// Gemini API configuration
+const GEMINI_API_URL = config.gemini.apiUrl;
+const GEMINI_API_KEY = config.gemini.apiKey;
+const GEMINI_MODEL = config.gemini.model;
+
+// Extraction provider options
+export const EXTRACTION_PROVIDERS = {
+  LLAMAPARSE: 'llamaparse',
+  GEMINI: 'gemini',
+};
+
 // Parsing instructions by source type
 const PARSING_INSTRUCTIONS = {
   'Question Bank': `
@@ -193,9 +204,10 @@ export const questionExtractionService = {
   /**
    * Extract questions from a question set
    * @param {string} questionSetId - ID of the question set
+   * @param {string} provider - Extraction provider ('llamaparse' or 'gemini')
    * @returns {Promise<object>} - Updated question set with extracted questions
    */
-  async extractQuestions(questionSetId) {
+  async extractQuestions(questionSetId, provider = EXTRACTION_PROVIDERS.LLAMAPARSE) {
     try {
       // Update status to processing
       await this.updateStatus(questionSetId, 'processing');
@@ -210,19 +222,31 @@ export const questionExtractionService = {
       const combinedContent = await this.combineLatexContent(questionSet.source_item_ids);
       console.log(`[EXTRACT] Combined LaTeX content size: ${Math.round(combinedContent.length / 1024)}KB`);
 
-      // Submit to LlamaParse with type-specific instructions
+      // Get source type for instructions
       const sourceType = questionSet.source_type || 'Question Bank';
-      const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
+      let rawResult;
 
-      // Store the job ID
-      await supabase
-        .from('question_sets')
-        .update({ llamaparse_job_id: jobId })
-        .eq('id', questionSetId);
+      if (provider === EXTRACTION_PROVIDERS.GEMINI) {
+        // Use Gemini for extraction
+        console.log(`[EXTRACT] Using Gemini AI for extraction`);
+        rawResult = await this.extractWithGemini(combinedContent, sourceType);
+        console.log(`[EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      } else {
+        // Use LlamaParse for extraction (default)
+        console.log(`[EXTRACT] Using LlamaParse for extraction`);
+        const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
 
-      // Poll for completion
-      const rawResult = await this.pollForCompletion(jobId);
-      console.log(`[EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        // Store the job ID
+        await supabase
+          .from('question_sets')
+          .update({ llamaparse_job_id: jobId })
+          .eq('id', questionSetId);
+
+        // Poll for completion
+        rawResult = await this.pollForCompletion(jobId);
+        console.log(`[EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      }
+
       console.log(`[EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
 
       // Parse the result into MCQ format
@@ -392,6 +416,182 @@ export const questionExtractionService = {
 
     const result = await response.json();
     return result.markdown || result.text || JSON.stringify(result);
+  },
+
+  /**
+   * Extract questions using Gemini AI
+   * @param {string} content - Combined LaTeX/text content
+   * @param {string} sourceType - Source type ('Question Bank' or 'Academic Book')
+   * @returns {Promise<string>} - Extracted content with questions in JSON format
+   */
+  async extractWithGemini(content, sourceType = 'Question Bank') {
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured. Please set GOOGLE_API_KEY in environment variables.');
+    }
+
+    const parsingInstructions = getParsingInstructions(sourceType);
+
+    // Split content into chunks if too large (Gemini has context limits)
+    const MAX_CONTENT_LENGTH = 900000; // ~900KB to stay within limits
+    let chunks = [];
+
+    if (content.length > MAX_CONTENT_LENGTH) {
+      console.log(`[EXTRACT] Content too large (${Math.round(content.length / 1024)}KB), splitting into chunks`);
+
+      // Split by document markers or by size
+      const documentParts = content.split(/% ========== Document \d+ ==========/);
+      let currentChunk = '';
+
+      for (const part of documentParts) {
+        if ((currentChunk + part).length > MAX_CONTENT_LENGTH && currentChunk.length > 0) {
+          chunks.push(currentChunk);
+          currentChunk = part;
+        } else {
+          currentChunk += part;
+        }
+      }
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      console.log(`[EXTRACT] Split into ${chunks.length} chunks`);
+    } else {
+      chunks = [content];
+    }
+
+    // Process each chunk and merge results
+    const allQuestions = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      console.log(`[EXTRACT] Processing chunk ${i + 1}/${chunks.length} (${Math.round(chunk.length / 1024)}KB)`);
+
+      const chunkPrompt = `${parsingInstructions}
+
+DOCUMENT CONTENT (Part ${i + 1} of ${chunks.length}):
+${chunk}
+
+IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not include any markdown code blocks or additional text. The response should start with { and end with }.`;
+
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              {
+                text: chunkPrompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 65536,
+          responseMimeType: 'application/json',
+        },
+      };
+
+      const response = await fetch(
+        `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[EXTRACT] Gemini API error: ${response.status} - ${errorText}`);
+        throw new Error(`Gemini API request failed: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      // Extract text from Gemini response
+      const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!generatedText) {
+        console.error(`[EXTRACT] Gemini response structure:`, JSON.stringify(result, null, 2));
+        throw new Error('No text generated from Gemini');
+      }
+
+      console.log(`[EXTRACT] Gemini chunk ${i + 1} response length: ${generatedText.length}`);
+
+      // Try to parse questions from this chunk
+      try {
+        // Clean up the response - remove markdown code blocks if present
+        let cleanedText = generatedText.trim();
+        if (cleanedText.startsWith('```json')) {
+          cleanedText = cleanedText.slice(7);
+        } else if (cleanedText.startsWith('```')) {
+          cleanedText = cleanedText.slice(3);
+        }
+        if (cleanedText.endsWith('```')) {
+          cleanedText = cleanedText.slice(0, -3);
+        }
+        cleanedText = cleanedText.trim();
+
+        const parsed = JSON.parse(cleanedText);
+        if (parsed.questions && Array.isArray(parsed.questions)) {
+          allQuestions.push(...parsed.questions);
+          console.log(`[EXTRACT] Extracted ${parsed.questions.length} questions from chunk ${i + 1}`);
+        }
+      } catch (parseErr) {
+        console.error(`[EXTRACT] Failed to parse Gemini chunk ${i + 1} response: ${parseErr.message}`);
+        // Continue with raw text - the main parser will try to extract questions
+      }
+    }
+
+    // If we successfully extracted questions from chunks, return them as JSON
+    if (allQuestions.length > 0) {
+      console.log(`[EXTRACT] Total questions extracted via Gemini: ${allQuestions.length}`);
+      return JSON.stringify({ questions: allQuestions });
+    }
+
+    // If chunk parsing failed, return the last result for main parser to handle
+    // This handles single chunk case or fallback
+    const lastChunkPrompt = `${parsingInstructions}
+
+DOCUMENT CONTENT:
+${chunks[chunks.length - 1]}
+
+IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not include any markdown code blocks or additional text.`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: lastChunkPrompt,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 65536,
+      },
+    };
+
+    const response = await fetch(
+      `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API request failed: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    return result.candidates?.[0]?.content?.parts?.[0]?.text || '';
   },
 
   /**
