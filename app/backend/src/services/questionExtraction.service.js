@@ -931,6 +931,65 @@ IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not includ
     if (error) throw error;
     return true;
   },
+
+  /**
+   * Create a question set from manually provided JSON
+   * @param {object} options - Options for creating the question set
+   * @param {string} options.name - Name of the question set
+   * @param {string} options.bookId - Book ID (optional)
+   * @param {string} options.chapterId - Chapter ID (optional)
+   * @param {object} options.questions - Questions JSON object with questions array
+   * @returns {Promise<object>} - Created question set record
+   */
+  async createManualQuestionSet(options) {
+    const { name, bookId, chapterId, questions } = options;
+
+    console.log('[IMPORT SERVICE] Creating manual question set:', {
+      name,
+      bookId,
+      chapterId,
+      questionCount: questions?.questions?.length,
+    });
+
+    if (!questions || !questions.questions || !Array.isArray(questions.questions)) {
+      throw new Error('Invalid questions format. Expected { questions: [...] }');
+    }
+
+    const insertData = {
+      name: name || `Manual Import ${new Date().toISOString()}`,
+      book_id: bookId || null,
+      chapter_id: chapterId || null,
+      source_item_ids: [],
+      source_type: 'Question Bank', // Must use valid type per DB constraint
+      status: 'completed',
+      questions: questions,
+      total_questions: questions.questions.length,
+      metadata: { source: 'manual_import' },
+    };
+
+    console.log('[IMPORT SERVICE] Insert data prepared, book_id:', insertData.book_id, 'chapter_id:', insertData.chapter_id);
+
+    const { data, error } = await supabase
+      .from('question_sets')
+      .insert(insertData)
+      .select(`
+        *,
+        book:books(id, name, display_name),
+        chapter:chapters(id, name, display_name, chapter_number)
+      `)
+      .single();
+
+    if (error) {
+      console.error('[IMPORT SERVICE] Supabase error:', error);
+      console.error('[IMPORT SERVICE] Error code:', error.code);
+      console.error('[IMPORT SERVICE] Error message:', error.message);
+      console.error('[IMPORT SERVICE] Error details:', error.details);
+      throw error;
+    }
+
+    console.log('[IMPORT SERVICE] Successfully created question set with ID:', data.id);
+    return data;
+  },
 };
 
 export default questionExtractionService;

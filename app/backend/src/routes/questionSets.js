@@ -11,6 +11,65 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ success: true, data: questionSets });
 }));
 
+// Manual import - create question set from JSON (must be before /:id routes)
+router.post('/import', asyncHandler(async (req, res) => {
+  const { name, bookId, chapterId, questions } = req.body;
+
+  console.log('[IMPORT] Received import request:', {
+    name,
+    bookId: bookId || '(none)',
+    chapterId: chapterId || '(none)',
+    questionsType: typeof questions,
+    hasQuestions: !!questions,
+  });
+
+  if (!questions) {
+    return res.status(400).json({
+      success: false,
+      error: 'questions field is required',
+    });
+  }
+
+  // Parse questions if it's a string
+  let parsedQuestions = questions;
+  if (typeof questions === 'string') {
+    try {
+      parsedQuestions = JSON.parse(questions);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid JSON format for questions',
+      });
+    }
+  }
+
+  // Validate questions structure
+  if (!parsedQuestions.questions || !Array.isArray(parsedQuestions.questions)) {
+    return res.status(400).json({
+      success: false,
+      error: 'questions must have a "questions" array property',
+    });
+  }
+
+  console.log('[IMPORT] Validated questions count:', parsedQuestions.questions.length);
+
+  try {
+    const questionSet = await questionExtractionService.createManualQuestionSet({
+      name,
+      bookId,
+      chapterId,
+      questions: parsedQuestions,
+    });
+
+    console.log('[IMPORT] Successfully created question set:', questionSet.id);
+    res.status(201).json({ success: true, data: questionSet });
+  } catch (error) {
+    console.error('[IMPORT] Error creating question set:', error.message);
+    console.error('[IMPORT] Error details:', error);
+    throw error;
+  }
+}));
+
 // Get question set by ID
 router.get('/:id', asyncHandler(async (req, res) => {
   const questionSet = await questionExtractionService.findById(req.params.id);

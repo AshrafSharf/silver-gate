@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { FileQuestion, Trash2, Eye, Filter } from 'lucide-react';
+import { FileQuestion, Trash2, Eye, Filter, Upload } from 'lucide-react';
 import QuestionSetModal from '../components/QuestionSetModal';
+import ImportQuestionsModal from '../components/ImportQuestionsModal';
 
 export default function ExtractedQuestionsPage() {
   const queryClient = useQueryClient();
   const [selectedSet, setSelectedSet] = useState(null);
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -59,6 +61,18 @@ export default function ExtractedQuestionsPage() {
     },
   });
 
+  // Import question set mutation
+  const importMutation = useMutation({
+    mutationFn: (data) => api.post('/question-sets/import', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['questionSets'] });
+    },
+  });
+
+  const handleImport = async (data) => {
+    await importMutation.mutateAsync(data);
+  };
+
   const handleDelete = (e, id, name) => {
     e.stopPropagation();
     if (window.confirm(`Are you sure you want to delete "${name}"?`)) {
@@ -91,6 +105,13 @@ export default function ExtractedQuestionsPage() {
           <h1 className="text-2xl font-bold text-gray-800">Extracted Questions</h1>
           <p className="text-gray-500 mt-1">View and manage extracted question sets</p>
         </div>
+        <button
+          onClick={() => setIsImportModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        >
+          <Upload className="w-4 h-4" />
+          Import JSON
+        </button>
       </div>
 
       {/* Filters */}
@@ -224,6 +245,17 @@ export default function ExtractedQuestionsPage() {
         isOpen={!!selectedSet}
         onClose={() => setSelectedSet(null)}
         questionSet={selectedSet}
+      />
+
+      {/* Import Questions Modal */}
+      <ImportQuestionsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={handleImport}
+        books={books?.data}
+        chapters={chapters?.data}
+        selectedBookId={selectedBookId}
+        selectedChapterId={selectedChapterId}
       />
     </div>
   );

@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { CheckCircle, Trash2, Eye, Filter } from 'lucide-react';
+import { CheckCircle, Trash2, Eye, Filter, Upload } from 'lucide-react';
 import SolutionSetModal from '../components/SolutionSetModal';
+import ImportSolutionsModal from '../components/ImportSolutionsModal';
 
 export default function ExtractedSolutionsPage() {
   const queryClient = useQueryClient();
   const [selectedSet, setSelectedSet] = useState(null);
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -59,6 +61,18 @@ export default function ExtractedSolutionsPage() {
     },
   });
 
+  // Import solution set mutation
+  const importMutation = useMutation({
+    mutationFn: (data) => api.post('/solution-sets/import', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solutionSets'] });
+    },
+  });
+
+  const handleImport = async (data) => {
+    await importMutation.mutateAsync(data);
+  };
+
   const handleDelete = (e, id, name) => {
     e.stopPropagation();
     if (window.confirm(`Are you sure you want to delete "${name}"?`)) {
@@ -91,6 +105,13 @@ export default function ExtractedSolutionsPage() {
           <h1 className="text-2xl font-bold text-gray-800">Extracted Solutions</h1>
           <p className="text-gray-500 mt-1">View and manage extracted solution sets</p>
         </div>
+        <button
+          onClick={() => setIsImportModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+        >
+          <Upload className="w-4 h-4" />
+          Import JSON
+        </button>
       </div>
 
       {/* Filters */}
@@ -224,6 +245,17 @@ export default function ExtractedSolutionsPage() {
         isOpen={!!selectedSet}
         onClose={() => setSelectedSet(null)}
         solutionSet={selectedSet}
+      />
+
+      {/* Import Solutions Modal */}
+      <ImportSolutionsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={handleImport}
+        books={books?.data}
+        chapters={chapters?.data}
+        selectedBookId={selectedBookId}
+        selectedChapterId={selectedChapterId}
       />
     </div>
   );

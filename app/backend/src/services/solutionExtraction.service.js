@@ -1475,6 +1475,49 @@ IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not includ
     if (error) throw error;
     return true;
   },
+
+  /**
+   * Create a solution set from manually provided JSON
+   * @param {object} options - Options for creating the solution set
+   * @param {string} options.name - Name of the solution set
+   * @param {string} options.bookId - Book ID (optional)
+   * @param {string} options.chapterId - Chapter ID (optional)
+   * @param {string} options.questionSetId - Question set ID to link (optional)
+   * @param {object} options.solutions - Solutions JSON object with solutions array
+   * @returns {Promise<object>} - Created solution set record
+   */
+  async createManualSolutionSet(options) {
+    const { name, bookId, chapterId, questionSetId, solutions } = options;
+
+    if (!solutions || !solutions.solutions || !Array.isArray(solutions.solutions)) {
+      throw new Error('Invalid solutions format. Expected { solutions: [...] }');
+    }
+
+    const { data, error } = await supabase
+      .from('solution_sets')
+      .insert({
+        name: name || `Manual Import ${new Date().toISOString()}`,
+        book_id: bookId || null,
+        chapter_id: chapterId || null,
+        question_set_id: questionSetId || null,
+        source_item_ids: [],
+        source_type: 'Question Bank', // Must use valid type per DB constraint
+        status: 'completed',
+        solutions: solutions,
+        total_solutions: solutions.solutions.length,
+        metadata: { source: 'manual_import' },
+      })
+      .select(`
+        *,
+        book:books(id, name, display_name),
+        chapter:chapters(id, name, display_name, chapter_number),
+        question_set:question_sets(id, name, total_questions)
+      `)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
 };
 
 export default solutionExtractionService;

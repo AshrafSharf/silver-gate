@@ -11,6 +11,49 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ success: true, data: solutionSets });
 }));
 
+// Manual import - create solution set from JSON (must be before /:id routes)
+router.post('/import', asyncHandler(async (req, res) => {
+  const { name, bookId, chapterId, questionSetId, solutions } = req.body;
+
+  if (!solutions) {
+    return res.status(400).json({
+      success: false,
+      error: 'solutions field is required',
+    });
+  }
+
+  // Parse solutions if it's a string
+  let parsedSolutions = solutions;
+  if (typeof solutions === 'string') {
+    try {
+      parsedSolutions = JSON.parse(solutions);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid JSON format for solutions',
+      });
+    }
+  }
+
+  // Validate solutions structure
+  if (!parsedSolutions.solutions || !Array.isArray(parsedSolutions.solutions)) {
+    return res.status(400).json({
+      success: false,
+      error: 'solutions must have a "solutions" array property',
+    });
+  }
+
+  const solutionSet = await solutionExtractionService.createManualSolutionSet({
+    name,
+    bookId,
+    chapterId,
+    questionSetId,
+    solutions: parsedSolutions,
+  });
+
+  res.status(201).json({ success: true, data: solutionSet });
+}));
+
 // Get solution set by ID
 router.get('/:id', asyncHandler(async (req, res) => {
   const solutionSet = await solutionExtractionService.findById(req.params.id);
