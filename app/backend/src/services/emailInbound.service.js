@@ -179,15 +179,18 @@ export const emailInboundService = {
         markSeen: true,
       });
 
-      let emailData = [];
       let attributes = null;
+      let bodyPromise = null;
 
       fetch.on('message', (msg) => {
-        msg.on('body', (stream) => {
+        // Create a promise that resolves when the body stream is fully read
+        bodyPromise = new Promise((resolveBody) => {
           const chunks = [];
-          stream.on('data', (chunk) => chunks.push(chunk));
-          stream.on('end', () => {
-            emailData = chunks;
+          msg.on('body', (stream) => {
+            stream.on('data', (chunk) => chunks.push(chunk));
+            stream.on('end', () => {
+              resolveBody(chunks);
+            });
           });
         });
 
@@ -199,13 +202,29 @@ export const emailInboundService = {
       fetch.once('error', reject);
 
       fetch.once('end', async () => {
+        // Wait for the body stream to complete before processing
+        const emailData = bodyPromise ? await bodyPromise : [];
+
         if (emailData.length === 0) {
+          logger.warn('EMAIL', `No email data received for UID ${uid}`);
           return resolve(null);
         }
 
         try {
           const rawEmail = Buffer.concat(emailData);
+          logger.info('EMAIL', `Parsing email UID ${uid}, raw size: ${rawEmail.length} bytes`);
+
           const parsed = await simpleParser(rawEmail);
+
+          // Log attachment details for debugging
+          if (parsed.attachments && parsed.attachments.length > 0) {
+            logger.info('EMAIL', `Found ${parsed.attachments.length} attachment(s):`);
+            parsed.attachments.forEach((att, i) => {
+              logger.info('EMAIL', `  [${i + 1}] ${att.filename || 'unnamed'} (${att.contentType}, ${att.size || 0} bytes)`);
+            });
+          } else {
+            logger.info('EMAIL', 'No attachments found in email');
+          }
 
           resolve({
             uid,
@@ -219,12 +238,13 @@ export const emailInboundService = {
             attachments: (parsed.attachments || []).map((att) => ({
               filename: att.filename || 'unnamed',
               contentType: att.contentType || 'application/octet-stream',
-              size: att.size || 0,
+              size: att.size || att.content?.length || 0,
               content: att.content, // Buffer
             })),
             attributes,
           });
         } catch (parseErr) {
+          logger.error('EMAIL', `Failed to parse email UID ${uid}: ${parseErr.message}`);
           reject(parseErr);
         }
       });
@@ -253,10 +273,33 @@ export const emailInboundService = {
 
     logger.info('EMAIL', `Active Job: Book=${activeJob.active_book_id}, Chapter=${activeJob.active_chapter_id}`);
 
-    // Filter PDF attachments
-    const pdfAttachments = email.attachments.filter(
-      (att) => att.contentType === 'application/pdf' || att.filename?.toLowerCase().endsWith('.pdf')
-    );
+    // Filter PDF attachments - include various PDF content types Gmail might use
+    const pdfContentTypes = [
+      'application/pdf',
+      'application/x-pdf',
+      'application/acrobat',
+      'application/vnd.pdf',
+      'text/pdf',
+      'text/x-pdf',
+    ];
+
+    const pdfAttachments = email.attachments.filter((att) => {
+      const contentType = att.contentType?.toLowerCase() || '';
+      const filename = att.filename?.toLowerCase() || '';
+
+      const isPdfByType = pdfContentTypes.some((type) => contentType.includes(type));
+      const isPdfByName = filename.endsWith('.pdf');
+      // Also check for generic octet-stream with .pdf filename
+      const isOctetStreamPdf = contentType.includes('octet-stream') && isPdfByName;
+
+      if (isPdfByType || isPdfByName || isOctetStreamPdf) {
+        logger.info('EMAIL', `  ✓ PDF attachment: "${att.filename}" (${att.contentType})`);
+        return true;
+      }
+
+      logger.info('EMAIL', `  ✗ Skipping non-PDF: "${att.filename}" (${att.contentType})`);
+      return false;
+    });
 
     if (pdfAttachments.length === 0) {
       logger.info('EMAIL', 'No PDF attachments found - email skipped');
@@ -288,6 +331,12 @@ export const emailInboundService = {
     logger.info('SCAN', `│ Size: ${Math.round(attachment.size / 1024)}KB`);
     logger.info('SCAN', `│ Type: ${activeJob.active_item_type || 'question'}`);
     logger.info('SCAN', `└─────────────────────────────────────────────────`);
+
+    // Check if attachment content exists
+    if (!attachment.content || attachment.content.length === 0) {
+      logger.error('SCAN', `Attachment "${attachment.filename}" has no content - skipping`);
+      throw new Error(`Attachment content is empty for "${attachment.filename}"`);
+    }
 
     // Convert Buffer to base64 for proper BYTEA storage in Supabase
     // Supabase JS client expects base64 strings for BYTEA columns
