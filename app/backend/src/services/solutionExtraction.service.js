@@ -4,6 +4,17 @@ import { config } from '../config/index.js';
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 
+// Gemini API configuration
+const GEMINI_API_URL = config.gemini.apiUrl;
+const GEMINI_API_KEY = config.gemini.apiKey;
+const GEMINI_MODEL = config.gemini.model;
+
+// Extraction provider options
+export const SOLUTION_EXTRACTION_PROVIDERS = {
+  LLAMAPARSE: 'llamaparse',
+  GEMINI: 'gemini',
+};
+
 // Parsing instructions by source type
 const SOLUTION_PARSING_INSTRUCTIONS = {
   'Question Bank': `
@@ -350,9 +361,10 @@ export const solutionExtractionService = {
   /**
    * Extract solutions from a solution set
    * @param {string} solutionSetId - ID of the solution set
+   * @param {string} provider - Extraction provider ('llamaparse' or 'gemini')
    * @returns {Promise<object>} - Updated solution set with extracted solutions
    */
-  async extractSolutions(solutionSetId) {
+  async extractSolutions(solutionSetId, provider = SOLUTION_EXTRACTION_PROVIDERS.LLAMAPARSE) {
     try {
       // Update status to processing
       await this.updateStatus(solutionSetId, 'processing');
@@ -367,19 +379,31 @@ export const solutionExtractionService = {
       const combinedContent = await this.combineLatexContent(solutionSet.source_item_ids);
       console.log(`[SOLUTION_EXTRACT] Combined LaTeX content size: ${Math.round(combinedContent.length / 1024)}KB`);
 
-      // Submit to LlamaParse with type-specific instructions
+      // Get source type for instructions
       const sourceType = solutionSet.source_type || 'Question Bank';
-      const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
+      let rawResult;
 
-      // Store the job ID
-      await supabase
-        .from('solution_sets')
-        .update({ llamaparse_job_id: jobId })
-        .eq('id', solutionSetId);
+      if (provider === SOLUTION_EXTRACTION_PROVIDERS.GEMINI) {
+        // Use Gemini for extraction
+        console.log(`[SOLUTION_EXTRACT] Using Gemini AI for extraction`);
+        rawResult = await this.extractWithGemini(combinedContent, sourceType);
+        console.log(`[SOLUTION_EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      } else {
+        // Use LlamaParse for extraction (default)
+        console.log(`[SOLUTION_EXTRACT] Using LlamaParse for extraction`);
+        const jobId = await this.submitToLlamaParse(combinedContent, sourceType);
 
-      // Poll for completion
-      const rawResult = await this.pollForCompletion(jobId);
-      console.log(`[SOLUTION_EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        // Store the job ID
+        await supabase
+          .from('solution_sets')
+          .update({ llamaparse_job_id: jobId })
+          .eq('id', solutionSetId);
+
+        // Poll for completion
+        rawResult = await this.pollForCompletion(jobId);
+        console.log(`[SOLUTION_EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      }
+
       console.log(`[SOLUTION_EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
 
       // Parse the result into solution format
@@ -557,6 +581,181 @@ export const solutionExtractionService = {
 
     const result = await response.json();
     return result.markdown || result.text || JSON.stringify(result);
+  },
+
+  /**
+   * Extract solutions using Gemini AI
+   * @param {string} content - Combined LaTeX/text content
+   * @param {string} sourceType - Source type ('Question Bank' or 'Academic Book')
+   * @returns {Promise<string>} - Extracted content with solutions in JSON format
+   */
+  async extractWithGemini(content, sourceType = 'Question Bank') {
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured. Please set GOOGLE_API_KEY in environment variables.');
+    }
+
+    const parsingInstructions = getParsingInstructions(sourceType);
+
+    // Split content into chunks if too large (Gemini has context limits)
+    const MAX_CONTENT_LENGTH = 900000; // ~900KB to stay within limits
+    let chunks = [];
+
+    if (content.length > MAX_CONTENT_LENGTH) {
+      console.log(`[SOLUTION_EXTRACT] Content too large (${Math.round(content.length / 1024)}KB), splitting into chunks`);
+
+      // Split by document markers or by size
+      const documentParts = content.split(/% ========== Document \d+ ==========/);
+      let currentChunk = '';
+
+      for (const part of documentParts) {
+        if ((currentChunk + part).length > MAX_CONTENT_LENGTH && currentChunk.length > 0) {
+          chunks.push(currentChunk);
+          currentChunk = part;
+        } else {
+          currentChunk += part;
+        }
+      }
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      console.log(`[SOLUTION_EXTRACT] Split into ${chunks.length} chunks`);
+    } else {
+      chunks = [content];
+    }
+
+    // Process each chunk and merge results
+    const allSolutions = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      console.log(`[SOLUTION_EXTRACT] Processing chunk ${i + 1}/${chunks.length} (${Math.round(chunk.length / 1024)}KB)`);
+
+      const chunkPrompt = `${parsingInstructions}
+
+DOCUMENT CONTENT (Part ${i + 1} of ${chunks.length}):
+${chunk}
+
+IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not include any markdown code blocks or additional text. The response should start with { and end with }.`;
+
+      const requestBody = {
+        contents: [
+          {
+            parts: [
+              {
+                text: chunkPrompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 65536,
+          responseMimeType: 'application/json',
+        },
+      };
+
+      const response = await fetch(
+        `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[SOLUTION_EXTRACT] Gemini API error: ${response.status} - ${errorText}`);
+        throw new Error(`Gemini API request failed: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      // Extract text from Gemini response
+      const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!generatedText) {
+        console.error(`[SOLUTION_EXTRACT] Gemini response structure:`, JSON.stringify(result, null, 2));
+        throw new Error('No text generated from Gemini');
+      }
+
+      console.log(`[SOLUTION_EXTRACT] Gemini chunk ${i + 1} response length: ${generatedText.length}`);
+
+      // Try to parse solutions from this chunk
+      try {
+        // Clean up the response - remove markdown code blocks if present
+        let cleanedText = generatedText.trim();
+        if (cleanedText.startsWith('```json')) {
+          cleanedText = cleanedText.slice(7);
+        } else if (cleanedText.startsWith('```')) {
+          cleanedText = cleanedText.slice(3);
+        }
+        if (cleanedText.endsWith('```')) {
+          cleanedText = cleanedText.slice(0, -3);
+        }
+        cleanedText = cleanedText.trim();
+
+        const parsed = JSON.parse(cleanedText);
+        if (parsed.solutions && Array.isArray(parsed.solutions)) {
+          allSolutions.push(...parsed.solutions);
+          console.log(`[SOLUTION_EXTRACT] Extracted ${parsed.solutions.length} solutions from chunk ${i + 1}`);
+        }
+      } catch (parseErr) {
+        console.error(`[SOLUTION_EXTRACT] Failed to parse Gemini chunk ${i + 1} response: ${parseErr.message}`);
+        // Continue with raw text - the main parser will try to extract solutions
+      }
+    }
+
+    // If we successfully extracted solutions from chunks, return them as JSON
+    if (allSolutions.length > 0) {
+      console.log(`[SOLUTION_EXTRACT] Total solutions extracted via Gemini: ${allSolutions.length}`);
+      return JSON.stringify({ solutions: allSolutions });
+    }
+
+    // If chunk parsing failed, return the last result for main parser to handle
+    const lastChunkPrompt = `${parsingInstructions}
+
+DOCUMENT CONTENT:
+${chunks[chunks.length - 1]}
+
+IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not include any markdown code blocks or additional text.`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            {
+              text: lastChunkPrompt,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 65536,
+      },
+    };
+
+    const response = await fetch(
+      `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API request failed: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    return result.candidates?.[0]?.content?.parts?.[0]?.text || '';
   },
 
   /**
@@ -1275,6 +1474,49 @@ export const solutionExtractionService = {
 
     if (error) throw error;
     return true;
+  },
+
+  /**
+   * Create a solution set from manually provided JSON
+   * @param {object} options - Options for creating the solution set
+   * @param {string} options.name - Name of the solution set
+   * @param {string} options.bookId - Book ID (optional)
+   * @param {string} options.chapterId - Chapter ID (optional)
+   * @param {string} options.questionSetId - Question set ID to link (optional)
+   * @param {object} options.solutions - Solutions JSON object with solutions array
+   * @returns {Promise<object>} - Created solution set record
+   */
+  async createManualSolutionSet(options) {
+    const { name, bookId, chapterId, questionSetId, solutions } = options;
+
+    if (!solutions || !solutions.solutions || !Array.isArray(solutions.solutions)) {
+      throw new Error('Invalid solutions format. Expected { solutions: [...] }');
+    }
+
+    const { data, error } = await supabase
+      .from('solution_sets')
+      .insert({
+        name: name || `Manual Import ${new Date().toISOString()}`,
+        book_id: bookId || null,
+        chapter_id: chapterId || null,
+        question_set_id: questionSetId || null,
+        source_item_ids: [],
+        source_type: 'Question Bank', // Must use valid type per DB constraint
+        status: 'completed',
+        solutions: solutions,
+        total_solutions: solutions.solutions.length,
+        metadata: { source: 'manual_import' },
+      })
+      .select(`
+        *,
+        book:books(id, name, display_name),
+        chapter:chapters(id, name, display_name, chapter_number),
+        question_set:question_sets(id, name, total_questions)
+      `)
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 };
 

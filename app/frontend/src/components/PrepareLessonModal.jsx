@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BookOpen, X, Filter, FileQuestion, CheckCircle, Eye, Loader2, Code, Edit3, Save, Plus, Minus, CheckCheck, AlertCircle, Trash2, AlertTriangle } from 'lucide-react';
+import { BookOpen, X, Filter, FileQuestion, CheckCircle, Eye, Loader2, Code, Edit3, Save, Plus, Minus, CheckCheck, AlertCircle, AlertTriangle } from 'lucide-react';
 import QuestionSetModal from './QuestionSetModal';
 import SolutionSetModal from './SolutionSetModal';
 import QuestionText from './QuestionText';
@@ -87,35 +87,58 @@ const ItemsList = memo(function ItemsList({
   handleChoiceChange,
   handleAddChoice,
   handleRemoveChoice,
+  splitMode,
+  activeGroupIndices,
+  otherGroupItemMap,
+  onToggleItem,
 }) {
   if (showJsonView) {
     // JSON View
     return (
       <div className="space-y-4">
-        {editedItems.map((item, index) => (
-          <div key={index} className="bg-white rounded-lg border shadow-sm p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="flex-shrink-0 w-8 h-8 bg-gray-700 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                {item.question_label || index + 1}
-              </span>
-              <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
-              {item.has_solution ? (
-                <span className="flex items-center gap-1 text-xs text-green-600 ml-auto">
-                  <CheckCheck className="w-3 h-3" />
-                  matched
+        {editedItems.map((item, index) => {
+          const inActiveGroup = activeGroupIndices.has(index);
+          const otherGroup = otherGroupItemMap.get(index);
+          const inOtherGroup = otherGroup !== undefined;
+          return (
+            <div key={index} className={`bg-white rounded-lg border shadow-sm p-4 ${splitMode === 'manual' && inActiveGroup ? 'ring-2 ring-blue-300 border-blue-400' : ''} ${splitMode === 'manual' && inOtherGroup ? 'opacity-50' : ''}`}>
+              <div className="flex items-center gap-2 mb-3">
+                {splitMode === 'manual' && (
+                  <input
+                    type="checkbox"
+                    checked={inActiveGroup}
+                    disabled={inOtherGroup}
+                    onChange={() => onToggleItem(index)}
+                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                )}
+                {splitMode === 'manual' && inOtherGroup && (
+                  <span className="px-2 py-0.5 text-xs font-medium bg-gray-200 text-gray-600 rounded-full">
+                    Group {otherGroup}
+                  </span>
+                )}
+                <span className="flex-shrink-0 w-8 h-8 bg-gray-700 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                  {item.question_label || index + 1}
                 </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-orange-500 ml-auto">
-                  <AlertCircle className="w-3 h-3" />
-                  no solution
-                </span>
-              )}
+                <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
+                {item.has_solution ? (
+                  <span className="flex items-center gap-1 text-xs text-green-600 ml-auto">
+                    <CheckCheck className="w-3 h-3" />
+                    matched
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs text-orange-500 ml-auto">
+                    <AlertCircle className="w-3 h-3" />
+                    no solution
+                  </span>
+                )}
+              </div>
+              <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
+                {JSON.stringify(item, null, 2)}
+              </pre>
             </div>
-            <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
-              {JSON.stringify(item, null, 2)}
-            </pre>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -123,22 +146,52 @@ const ItemsList = memo(function ItemsList({
   // Formatted View with Edit capability
   return (
     <div className="space-y-4">
-      {editedItems.map((item, index) => (
-        <div
-          key={index}
-          className={`border rounded-lg p-4 ${item.has_solution ? 'border-green-200 bg-green-50' : 'border-orange-200 bg-orange-50'}`}
-        >
-          {/* View Mode */}
-          {editingItemIndex !== index && (
-            <ItemViewMode
-              item={item}
-              index={index}
-              onEdit={() => setEditingItemIndex(index)}
-            />
-          )}
+      {editedItems.map((item, index) => {
+        const inActiveGroup = activeGroupIndices.has(index);
+        const otherGroup = otherGroupItemMap.get(index);
+        const inOtherGroup = otherGroup !== undefined;
+        return (
+          <div
+            key={index}
+            className={`border rounded-lg p-4 ${
+              splitMode === 'manual' && inActiveGroup
+                ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-200'
+                : splitMode === 'manual' && inOtherGroup
+                  ? 'border-gray-300 bg-gray-100 opacity-60'
+                  : item.has_solution
+                    ? 'border-green-200 bg-green-50'
+                    : 'border-orange-200 bg-orange-50'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {splitMode === 'manual' && (
+                <div className="flex-shrink-0 pt-1 flex flex-col items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={inActiveGroup}
+                    disabled={inOtherGroup}
+                    onChange={() => onToggleItem(index)}
+                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  {inOtherGroup && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-300 text-gray-700 rounded-full whitespace-nowrap">
+                      G{otherGroup}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+              {/* View Mode */}
+              {editingItemIndex !== index && (
+                <ItemViewMode
+                  item={item}
+                  index={index}
+                  onEdit={() => setEditingItemIndex(index)}
+                />
+              )}
 
-          {/* Edit Mode */}
-          {editingItemIndex === index && (
+              {/* Edit Mode */}
+              {editingItemIndex === index && (
             <>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -245,8 +298,11 @@ const ItemsList = memo(function ItemsList({
               </div>
             </>
           )}
+            </div>
+          </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 });
@@ -276,11 +332,12 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
   const [parentSectionName, setParentSectionName] = useState('');
   const [lessonItemCount, setLessonItemCount] = useState('');
 
-  // Manual range mode state
+  // Manual pick mode state
   const [splitMode, setSplitMode] = useState('auto'); // 'auto' | 'manual'
-  const [rangeConfigs, setRangeConfigs] = useState([
-    { start: 1, end: '', lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }
+  const [pickGroups, setPickGroups] = useState([
+    { selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }
   ]);
+  const [activeGroupIndex, setActiveGroupIndex] = useState(0);
 
   // Question type state (for Auto Split mode)
   const [questionType, setQuestionType] = useState('OTHER');
@@ -330,7 +387,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       setParentSectionName('');
       setLessonItemCount('');
       setSplitMode('auto');
-      setRangeConfigs([{ start: 1, end: '', lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }]);
+      setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
+      setActiveGroupIndex(0);
       setQuestionType('OTHER');
     }
   }, [isOpen]);
@@ -391,42 +449,49 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       setPreparedData(response.data);
       setEditedItems(response.data.items || []);
       setEditingItemIndex(null);
-      // Reset range configs with total items available
-      const totalItems = response.data.items?.length || 0;
-      setRangeConfigs([{ start: 1, end: totalItems, lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }]);
+      setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
+      setActiveGroupIndex(0);
     },
   });
 
   // Create lesson mutation
   const createLessonMutation = useMutation({
-    mutationFn: () => {
-      const payload = {
-        question_set_id: selectedQuestionSetId,
-        solution_set_id: selectedSolutionSetId,
-        items: editedItems,
-        question_type: questionType,
-      };
-
+    mutationFn: async () => {
       if (splitMode === 'auto') {
-        payload.name = lessonName.trim();
-        payload.common_parent_section_name = commonParentSectionName.trim() || null;
-        payload.parent_section_name = parentSectionName.trim() || null;
-        payload.lesson_item_count = lessonItemCount ? parseInt(lessonItemCount, 10) : null;
-      } else {
-        // Manual mode - send range_configs with lesson_name and question_type per range
-        payload.range_configs = rangeConfigs.map(config => ({
-          start: parseInt(config.start, 10),
-          end: parseInt(config.end, 10),
-          lesson_name: config.lesson_name.trim(),
-          parent_section_name: config.parent_section_name.trim() || null,
-          common_parent_section_name: config.common_parent_section_name.trim() || null,
-          question_type: config.question_type || 'OTHER',
-        }));
-        // Remove global question_type for manual mode since it's per-range
-        delete payload.question_type;
+        const payload = {
+          question_set_id: selectedQuestionSetId,
+          solution_set_id: selectedSolutionSetId,
+          items: editedItems,
+          question_type: questionType,
+          name: lessonName.trim(),
+          common_parent_section_name: commonParentSectionName.trim() || null,
+          parent_section_name: parentSectionName.trim() || null,
+          lesson_item_count: lessonItemCount ? parseInt(lessonItemCount, 10) : null,
+        };
+        return api.post('/lessons', payload);
       }
 
-      return api.post('/lessons', payload);
+      // Manual pick mode - sequential call per group with continuous labels
+      let labelOffset = 0;
+      for (const group of pickGroups) {
+        const orderedIndices = [...group.selectedIndices];
+        const pickedItems = orderedIndices.map((originalIndex, newIndex) => ({
+          ...editedItems[originalIndex],
+          question_label: String(labelOffset + newIndex + 1),
+        }));
+        labelOffset += orderedIndices.length;
+
+        const payload = {
+          question_set_id: selectedQuestionSetId,
+          solution_set_id: selectedSolutionSetId,
+          items: pickedItems,
+          question_type: group.question_type,
+          name: group.lesson_name.trim(),
+          common_parent_section_name: group.common_parent_section_name.trim() || null,
+          parent_section_name: group.parent_section_name.trim() || null,
+        };
+        await api.post('/lessons', payload);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['lessons']);
@@ -443,6 +508,27 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     : [];
 
   const canPrepareLesson = selectedQuestionSetId && selectedSolutionSetId;
+
+  // Multi-group computed values
+  const activeGroupIndices = useMemo(
+    () => pickGroups[activeGroupIndex]?.selectedIndices || new Set(),
+    [pickGroups, activeGroupIndex]
+  );
+
+  const otherGroupItemMap = useMemo(() => {
+    const map = new Map();
+    pickGroups.forEach((group, gIdx) => {
+      if (gIdx !== activeGroupIndex) {
+        group.selectedIndices.forEach(idx => map.set(idx, gIdx + 1));
+      }
+    });
+    return map;
+  }, [pickGroups, activeGroupIndex]);
+
+  const totalPickedCount = useMemo(
+    () => pickGroups.reduce((sum, g) => sum + g.selectedIndices.size, 0),
+    [pickGroups]
+  );
 
   const getStatusBadge = (status) => {
     const styles = {
@@ -479,7 +565,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     setParentSectionName('');
     setLessonItemCount('');
     setSplitMode('auto');
-    setRangeConfigs([{ start: 1, end: '', lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }]);
+    setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
+    setActiveGroupIndex(0);
     setQuestionType('OTHER');
     prepareLessonMutation.reset();
     createLessonMutation.reset();
@@ -496,7 +583,8 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     setParentSectionName('');
     setLessonItemCount('');
     setSplitMode('auto');
-    setRangeConfigs([{ start: 1, end: '', lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }]);
+    setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
+    setActiveGroupIndex(0);
     setQuestionType('OTHER');
     prepareLessonMutation.reset();
   };
@@ -542,122 +630,92 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     });
   }, []);
 
-  // Range config handlers
-  const handleRangeConfigChange = useCallback((index, field, value) => {
-    setRangeConfigs(prev => {
+  // Multi-group manual pick handlers
+  const handleToggleItem = useCallback((index) => {
+    // Only toggle if item is not in another group
+    setPickGroups(prev => {
+      const isInOtherGroup = prev.some((g, gIdx) => gIdx !== activeGroupIndex && g.selectedIndices.has(index));
+      if (isInOtherGroup) return prev;
       const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
+      const group = { ...updated[activeGroupIndex] };
+      const next = new Set(group.selectedIndices);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      group.selectedIndices = next;
+      updated[activeGroupIndex] = group;
+      return updated;
+    });
+  }, [activeGroupIndex]);
+
+  const handleSelectAll = useCallback(() => {
+    setPickGroups(prev => {
+      const otherIndices = new Set();
+      prev.forEach((g, gIdx) => {
+        if (gIdx !== activeGroupIndex) {
+          g.selectedIndices.forEach(idx => otherIndices.add(idx));
+        }
+      });
+      const updated = [...prev];
+      const group = { ...updated[activeGroupIndex] };
+      group.selectedIndices = new Set(editedItems.map((_, i) => i).filter(i => !otherIndices.has(i)));
+      updated[activeGroupIndex] = group;
+      return updated;
+    });
+  }, [editedItems, activeGroupIndex]);
+
+  const handleDeselectAll = useCallback(() => {
+    setPickGroups(prev => {
+      const updated = [...prev];
+      const group = { ...updated[activeGroupIndex] };
+      group.selectedIndices = new Set();
+      updated[activeGroupIndex] = group;
+      return updated;
+    });
+  }, [activeGroupIndex]);
+
+  const handleAddGroup = useCallback(() => {
+    setPickGroups(prev => {
+      const next = [
+        ...prev,
+        { selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }
+      ];
+      setActiveGroupIndex(next.length - 1);
+      return next;
+    });
+  }, []);
+
+  const handleRemoveGroup = useCallback((index) => {
+    setPickGroups(prev => {
+      if (prev.length <= 1) return prev;
+      const updated = prev.filter((_, i) => i !== index);
+      setActiveGroupIndex(prevActive => {
+        if (index < prevActive) return prevActive - 1;
+        if (index === prevActive) return Math.min(prevActive, updated.length - 1);
+        return prevActive;
+      });
       return updated;
     });
   }, []);
 
-  const handleAddRangeConfig = useCallback(() => {
-    setRangeConfigs(prev => {
-      const lastRange = prev[prev.length - 1];
-      const newStart = lastRange?.end ? parseInt(lastRange.end, 10) + 1 : 1;
-      return [...prev, { start: newStart, end: '', lesson_name: '', parent_section_name: '', common_parent_section_name: '', question_type: 'OTHER' }];
+  const handleGroupFieldChange = useCallback((groupIndex, field, value) => {
+    setPickGroups(prev => {
+      const updated = [...prev];
+      updated[groupIndex] = { ...updated[groupIndex], [field]: value };
+      return updated;
     });
   }, []);
-
-  const handleRemoveRangeConfig = useCallback((index) => {
-    setRangeConfigs(prev => {
-      if (prev.length <= 1) return prev;
-      return prev.filter((_, i) => i !== index);
-    });
-  }, []);
-
-  // Validate range configs
-  const rangeValidation = useMemo(() => {
-    const totalItems = editedItems.length;
-    const errors = [];
-    const warnings = [];
-
-    if (splitMode !== 'manual' || totalItems === 0) {
-      return { errors, warnings, isValid: true };
-    }
-
-    // Check if range count exceeds total items
-    if (rangeConfigs.length > totalItems) {
-      errors.push(`Number of ranges (${rangeConfigs.length}) cannot exceed total items (${totalItems})`);
-      return { errors, warnings, isValid: false };
-    }
-
-    // Check each range
-    const sortedRanges = [...rangeConfigs]
-      .map((config, i) => ({ ...config, originalIndex: i }))
-      .filter(config => config.start !== '' && config.end !== '')
-      .sort((a, b) => parseInt(a.start, 10) - parseInt(b.start, 10));
-
-    for (let idx = 0; idx < rangeConfigs.length; idx++) {
-      const config = rangeConfigs[idx];
-      const start = parseInt(config.start, 10);
-      const end = parseInt(config.end, 10);
-
-      if (!config.lesson_name || !config.lesson_name.trim()) {
-        errors.push(`Range ${idx + 1}: Lesson name is required`);
-      }
-
-      if (config.start === '' || config.end === '') {
-        errors.push(`Range ${idx + 1}: Start and end values are required`);
-        continue;
-      }
-
-      if (isNaN(start) || isNaN(end)) {
-        errors.push(`Range ${idx + 1}: Start and end must be valid numbers`);
-        continue;
-      }
-
-      if (start < 1) {
-        errors.push(`Range ${idx + 1}: Start value must be >= 1`);
-      }
-
-      if (end > totalItems) {
-        errors.push(`Range ${idx + 1}: End value must be <= ${totalItems} (total items)`);
-      }
-
-      if (start > end) {
-        errors.push(`Range ${idx + 1}: Start (${start}) must be <= End (${end})`);
-      }
-    }
-
-    // Check for overlaps
-    for (let i = 1; i < sortedRanges.length; i++) {
-      const prevEnd = parseInt(sortedRanges[i - 1].end, 10);
-      const currStart = parseInt(sortedRanges[i].start, 10);
-      if (currStart <= prevEnd) {
-        errors.push(`Ranges overlap: ${sortedRanges[i - 1].start}-${sortedRanges[i - 1].end} and ${sortedRanges[i].start}-${sortedRanges[i].end}`);
-      }
-    }
-
-    // Check for coverage gaps (warning only)
-    if (errors.length === 0 && sortedRanges.length > 0) {
-      const coveredItems = new Set();
-      for (const config of sortedRanges) {
-        for (let i = parseInt(config.start, 10); i <= parseInt(config.end, 10); i++) {
-          coveredItems.add(i);
-        }
-      }
-      const uncoveredCount = totalItems - coveredItems.size;
-      if (uncoveredCount > 0) {
-        warnings.push(`${uncoveredCount} items are not covered by any range`);
-      }
-    }
-
-    return {
-      errors,
-      warnings,
-      isValid: errors.length === 0,
-    };
-  }, [splitMode, rangeConfigs, editedItems.length]);
 
   // Check if form is valid for submission
   const canCreateLesson = useMemo(() => {
     if (splitMode === 'auto') {
       return lessonName.trim() !== '';
     }
-    // Manual mode - validation includes lesson_name check per range
-    return rangeValidation.isValid && rangeConfigs.some(c => c.start !== '' && c.end !== '' && c.lesson_name.trim() !== '');
-  }, [lessonName, splitMode, rangeValidation.isValid, rangeConfigs]);
+    // Manual pick mode: every group must have a lesson name and at least one selected item
+    return pickGroups.every(g => g.lesson_name.trim() !== '' && g.selectedIndices.size > 0);
+  }, [lessonName, splitMode, pickGroups]);
 
   if (!isOpen) return null;
 
@@ -720,46 +778,16 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
               handleChoiceChange={handleChoiceChange}
               handleAddChoice={handleAddChoice}
               handleRemoveChoice={handleRemoveChoice}
+              splitMode={splitMode}
+              activeGroupIndices={activeGroupIndices}
+              otherGroupItemMap={otherGroupItemMap}
+              onToggleItem={handleToggleItem}
             />
           </div>
 
           {/* Footer - Create Lesson Form */}
           <div className="p-4 border-t bg-gray-50">
             <form onSubmit={handleCreateLesson} className="space-y-4">
-              {/* Lesson Name and Question Type Row - Only shown in Auto Split mode */}
-              {splitMode === 'auto' && (
-                <div className="flex items-end gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Lesson Name
-                    </label>
-                    <input
-                      type="text"
-                      value={lessonName}
-                      onChange={(e) => setLessonName(e.target.value)}
-                      placeholder="e.g., Chapter 3 Practice Problems"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                      required
-                    />
-                  </div>
-                  <div className="w-40">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Question Type
-                    </label>
-                    <select
-                      value={questionType}
-                      onChange={(e) => setQuestionType(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    >
-                      <option value="CHOICE_BASED">Choice Based</option>
-                      <option value="PROOF_BASED">Proof Based</option>
-                      <option value="MULTI_QUESTIONS">Multi Questions</option>
-                      <option value="OTHER">Other</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
               {/* Mode Toggle */}
               <div className="flex items-center gap-6 py-2">
                 <span className="text-sm font-medium text-gray-700">Split Mode:</span>
@@ -783,178 +811,228 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                     onChange={() => setSplitMode('manual')}
                     className="w-4 h-4 text-green-600 focus:ring-green-500"
                   />
-                  <span className="text-sm text-gray-700">Manual Ranges</span>
+                  <span className="text-sm text-gray-700">Manual Pick</span>
                 </label>
               </div>
 
-              {/* Auto Split Mode UI */}
+              {/* Auto Mode Fields */}
               {splitMode === 'auto' && (
-                <div className="flex items-end gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Parent Section Name
-                    </label>
-                    <input
-                      type="text"
-                      value={parentSectionName}
-                      onChange={(e) => setParentSectionName(e.target.value)}
-                      placeholder="e.g., Section A"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    />
+                <>
+                  <div className="flex items-end gap-4">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Lesson Name
+                      </label>
+                      <input
+                        type="text"
+                        value={lessonName}
+                        onChange={(e) => setLessonName(e.target.value)}
+                        placeholder="e.g., Chapter 3 Practice Problems"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                        required
+                      />
+                    </div>
+                    <div className="w-40">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Question Type
+                      </label>
+                      <select
+                        value={questionType}
+                        onChange={(e) => setQuestionType(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      >
+                        <option value="CHOICE_BASED">Choice Based</option>
+                        <option value="PROOF_BASED">Proof Based</option>
+                        <option value="MULTI_QUESTIONS">Multi Questions</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Common Parent Section Name
-                    </label>
-                    <input
-                      type="text"
-                      value={commonParentSectionName}
-                      onChange={(e) => setCommonParentSectionName(e.target.value)}
-                      placeholder="e.g., Algebra Basics"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    />
+                  <div className="flex items-end gap-4">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Parent Section Name
+                      </label>
+                      <input
+                        type="text"
+                        value={parentSectionName}
+                        onChange={(e) => setParentSectionName(e.target.value)}
+                        placeholder="e.g., Section A"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Common Parent Section Name
+                      </label>
+                      <input
+                        type="text"
+                        value={commonParentSectionName}
+                        onChange={(e) => setCommonParentSectionName(e.target.value)}
+                        placeholder="e.g., Algebra Basics"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      />
+                    </div>
+                    <div className="w-32">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Items per Lesson
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={lessonItemCount}
+                        onChange={(e) => setLessonItemCount(e.target.value)}
+                        placeholder="e.g., 5"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      />
+                    </div>
                   </div>
-                  <div className="w-32">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Items per Lesson
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={lessonItemCount}
-                      onChange={(e) => setLessonItemCount(e.target.value)}
-                      placeholder="e.g., 5"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                    />
-                  </div>
-                </div>
+                </>
               )}
 
-              {/* Manual Ranges Mode UI */}
+              {/* Manual Pick Mode UI */}
               {splitMode === 'manual' && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">
-                      Range Configurations ({editedItems.length} items available)
-                    </span>
+                  {/* Group Tabs */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {pickGroups.map((group, gIdx) => (
+                      <button
+                        key={gIdx}
+                        type="button"
+                        onClick={() => setActiveGroupIndex(gIdx)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                          gIdx === activeGroupIndex
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        Group {gIdx + 1} ({group.selectedIndices.size})
+                        {pickGroups.length > 1 && (
+                          <span
+                            role="button"
+                            onClick={(e) => { e.stopPropagation(); handleRemoveGroup(gIdx); }}
+                            className={`ml-1 w-4 h-4 flex items-center justify-center rounded-full text-xs leading-none hover:bg-opacity-20 hover:bg-black ${
+                              gIdx === activeGroupIndex ? 'text-blue-200 hover:text-white' : 'text-gray-400 hover:text-gray-600'
+                            }`}
+                          >
+                            &times;
+                          </span>
+                        )}
+                      </button>
+                    ))}
                     <button
                       type="button"
-                      onClick={handleAddRangeConfig}
-                      disabled={rangeConfigs.length >= editedItems.length}
-                      className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      onClick={handleAddGroup}
+                      className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-full hover:bg-blue-100 transition-colors"
                     >
-                      <Plus className="w-4 h-4" />
-                      Add Range
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Group
                     </button>
                   </div>
 
-                  {/* Range Config Rows */}
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {rangeConfigs.map((config, index) => (
-                      <div key={index} className="p-3 bg-white rounded-lg border space-y-2">
-                        {/* Row 1: Lesson Name and Question Type */}
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1">
-                            <label className="block text-xs text-gray-500 mb-1">Lesson Name *</label>
-                            <input
-                              type="text"
-                              value={config.lesson_name}
-                              onChange={(e) => handleRangeConfigChange(index, 'lesson_name', e.target.value)}
-                              placeholder="e.g., Chapter 3 Problems"
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            />
-                          </div>
-                          <div className="w-36">
-                            <label className="block text-xs text-gray-500 mb-1">Question Type</label>
-                            <select
-                              value={config.question_type || 'OTHER'}
-                              onChange={(e) => handleRangeConfigChange(index, 'question_type', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            >
-                              <option value="CHOICE_BASED">Choice Based</option>
-                              <option value="PROOF_BASED">Proof Based</option>
-                              <option value="MULTI_QUESTIONS">Multi Questions</option>
-                              <option value="OTHER">Other</option>
-                            </select>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRangeConfig(index)}
-                            disabled={rangeConfigs.length <= 1}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:text-gray-300 disabled:hover:bg-transparent transition-colors mt-4"
+                  {/* Active Group Fields */}
+                  {pickGroups[activeGroupIndex] && (
+                    <>
+                      <div className="flex items-end gap-4">
+                        <div className="flex-1">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Lesson Name
+                          </label>
+                          <input
+                            type="text"
+                            value={pickGroups[activeGroupIndex].lesson_name}
+                            onChange={(e) => handleGroupFieldChange(activeGroupIndex, 'lesson_name', e.target.value)}
+                            placeholder="e.g., Chapter 3 Practice Problems"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="w-40">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Question Type
+                          </label>
+                          <select
+                            value={pickGroups[activeGroupIndex].question_type}
+                            onChange={(e) => handleGroupFieldChange(activeGroupIndex, 'question_type', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                        {/* Row 2: Range and Section Names */}
-                        <div className="flex items-center gap-2">
-                          <div className="w-20">
-                            <label className="block text-xs text-gray-500 mb-1">Start</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max={editedItems.length}
-                              value={config.start}
-                              onChange={(e) => handleRangeConfigChange(index, 'start', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            />
-                          </div>
-                          <div className="w-20">
-                            <label className="block text-xs text-gray-500 mb-1">End</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max={editedItems.length}
-                              value={config.end}
-                              onChange={(e) => handleRangeConfigChange(index, 'end', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="block text-xs text-gray-500 mb-1">Parent Section Name</label>
-                            <input
-                              type="text"
-                              value={config.parent_section_name}
-                              onChange={(e) => handleRangeConfigChange(index, 'parent_section_name', e.target.value)}
-                              placeholder="e.g., Section A"
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="block text-xs text-gray-500 mb-1">Common Parent Section</label>
-                            <input
-                              type="text"
-                              value={config.common_parent_section_name}
-                              onChange={(e) => handleRangeConfigChange(index, 'common_parent_section_name', e.target.value)}
-                              placeholder="e.g., Algebra"
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-green-500"
-                            />
-                          </div>
+                            <option value="CHOICE_BASED">Choice Based</option>
+                            <option value="PROOF_BASED">Proof Based</option>
+                            <option value="MULTI_QUESTIONS">Multi Questions</option>
+                            <option value="OTHER">Other</option>
+                          </select>
                         </div>
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Validation Messages */}
-                  {rangeValidation.errors.length > 0 && (
-                    <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg">
-                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                      <div className="text-sm text-red-600">
-                        {rangeValidation.errors.map((error, i) => (
-                          <div key={i}>{error}</div>
-                        ))}
+                      <div className="flex items-end gap-4">
+                        <div className="flex-1">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Parent Section Name
+                          </label>
+                          <input
+                            type="text"
+                            value={pickGroups[activeGroupIndex].parent_section_name}
+                            onChange={(e) => handleGroupFieldChange(activeGroupIndex, 'parent_section_name', e.target.value)}
+                            placeholder="e.g., Section A"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Common Parent Section Name
+                          </label>
+                          <input
+                            type="text"
+                            value={pickGroups[activeGroupIndex].common_parent_section_name}
+                            onChange={(e) => handleGroupFieldChange(activeGroupIndex, 'common_parent_section_name', e.target.value)}
+                            placeholder="e.g., Algebra Basics"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
 
-                  {rangeValidation.warnings.length > 0 && rangeValidation.errors.length === 0 && (
+                  {/* Selection Controls */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">
+                      Selected: <span className="text-blue-600 font-bold">{activeGroupIndices.size}</span> / {editedItems.length}
+                      {pickGroups.length > 1 && (
+                        <span className="text-gray-400 ml-2">(Total across all groups: {totalPickedCount})</span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectAll}
+                        className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeselectAll}
+                        disabled={activeGroupIndices.size === 0}
+                        className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Warnings */}
+                  {activeGroupIndices.size === 0 && (
                     <div className="flex items-start gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded-lg">
                       <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
-                      <div className="text-sm text-yellow-700">
-                        {rangeValidation.warnings.map((warning, i) => (
-                          <div key={i}>{warning}</div>
-                        ))}
-                      </div>
+                      <span className="text-sm text-yellow-700">
+                        Select at least one question for Group {activeGroupIndex + 1} using the checkboxes above.
+                      </span>
+                    </div>
+                  )}
+                  {pickGroups.some((g, i) => i !== activeGroupIndex && (g.lesson_name.trim() === '' || g.selectedIndices.size === 0)) && (
+                    <div className="flex items-start gap-2 p-2 bg-orange-50 border border-orange-200 rounded-lg">
+                      <AlertTriangle className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm text-orange-700">
+                        Some groups have an empty name or no selections. All groups must have a name and at least one question.
+                      </span>
                     </div>
                   )}
                 </div>
@@ -983,7 +1061,9 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                   ) : (
                     <>
                       <Save className="w-4 h-4" />
-                      Create Lesson{splitMode === 'manual' && rangeConfigs.filter(c => c.start && c.end).length > 1 ? 's' : ''}
+                      {splitMode === 'manual'
+                        ? `Create Lessons (${pickGroups.length} group${pickGroups.length > 1 ? 's' : ''}, ${totalPickedCount} question${totalPickedCount !== 1 ? 's' : ''})`
+                        : 'Create Lesson'}
                     </>
                   )}
                 </button>

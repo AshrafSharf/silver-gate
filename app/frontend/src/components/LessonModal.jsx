@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BookOpen, X, Save, Edit2, FileQuestion, CheckCircle, Code, Eye } from 'lucide-react';
+import { BookOpen, X, Save, Edit2, FileQuestion, CheckCircle, Code, Eye, Trash2 } from 'lucide-react';
 import QuestionText from './QuestionText';
 
 export default function LessonModal({ lesson, onClose }) {
@@ -29,6 +29,21 @@ export default function LessonModal({ lesson, onClose }) {
       queryClient.invalidateQueries(['lessons']);
     },
   });
+
+  // Delete lesson item mutation
+  const deleteItemMutation = useMutation({
+    mutationFn: (itemId) => api.delete(`/lessons/${lesson.id}/items/${itemId}`),
+    onSuccess: (_, deletedItemId) => {
+      setEditedItems(prev => prev.filter(item => item.id !== deletedItemId));
+      queryClient.invalidateQueries(['lessons']);
+    },
+  });
+
+  const handleDeleteItem = (itemId, label) => {
+    if (window.confirm(`Delete question ${label}?`)) {
+      deleteItemMutation.mutate(itemId);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -185,6 +200,13 @@ export default function LessonModal({ lesson, onClose }) {
                         {lessonItem.question_solution_item_json?.question_label || index + 1}
                       </span>
                       <span className="text-sm font-medium text-gray-500">question_solution_item_json</span>
+                      <button
+                        onClick={() => handleDeleteItem(lessonItem.id, lessonItem.question_solution_item_json?.question_label || index + 1)}
+                        className="ml-auto p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete item"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                     <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto text-sm font-mono">
                       {JSON.stringify(lessonItem.question_solution_item_json, null, 2)}
@@ -307,6 +329,15 @@ export default function LessonModal({ lesson, onClose }) {
                           </div>
                         )}
                       </div>
+                      {!isEditing && (
+                        <button
+                          onClick={() => handleDeleteItem(lessonItem.id, item.question_label || index + 1)}
+                          className="flex-shrink-0 p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

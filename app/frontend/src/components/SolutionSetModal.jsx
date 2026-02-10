@@ -1,7 +1,10 @@
-import { X, CheckCircle } from 'lucide-react';
+import { useState } from 'react';
+import { X, CheckCircle, Code, Eye } from 'lucide-react';
 import QuestionText from './QuestionText';
 
 export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
+  const [viewMode, setViewMode] = useState('preview'); // 'preview' or 'json'
+
   if (!isOpen || !solutionSet) return null;
 
   const solutions = solutionSet.solutions?.solutions || [];
@@ -28,13 +31,42 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
               </div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-purple-100 rounded-lg transition-colors"
-            title="Close"
-          >
-            <X className="w-5 h-5 text-gray-600" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* View Mode Toggle */}
+            <div className="flex rounded-lg border border-gray-300 bg-white overflow-hidden">
+              <button
+                onClick={() => setViewMode('preview')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === 'preview'
+                    ? 'bg-purple-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+                title="Preview"
+              >
+                <Eye className="w-4 h-4" />
+                Preview
+              </button>
+              <button
+                onClick={() => setViewMode('json')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === 'json'
+                    ? 'bg-purple-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+                title="JSON"
+              >
+                <Code className="w-4 h-4" />
+                JSON
+              </button>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-purple-100 rounded-lg transition-colors"
+              title="Close"
+            >
+              <X className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -60,7 +92,14 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
             </div>
           )}
 
-          {solutions.length > 0 ? (
+          {viewMode === 'json' ? (
+            /* JSON View */
+            <div className="bg-gray-900 rounded-lg p-4 overflow-auto">
+              <pre className="text-sm text-gray-100 font-mono whitespace-pre-wrap break-words">
+                {JSON.stringify(solutionSet.solutions, null, 2)}
+              </pre>
+            </div>
+          ) : solutions.length > 0 ? (
             <div className="space-y-4">
               {solutions.map((solution, index) => (
                 <div key={index} className="bg-white rounded-lg border shadow-sm p-4">

@@ -454,8 +454,10 @@ export const lessonsService = {
         // Extract items for this range (convert 1-indexed to 0-indexed)
         const rangeItems = mergedItems.slice(start - 1, end);
 
-        // Create question_range string (e.g., "1 - 10")
-        const questionRange = `${start} - ${end}`;
+        // Create question_range string using actual question labels
+        const firstLabel = rangeItems[0]?.question_label || start;
+        const lastLabel = rangeItems[rangeItems.length - 1]?.question_label || end;
+        const questionRange = `${firstLabel} - ${lastLabel}`;
 
         // Use lesson_name from the config (no range appending)
         const lessonId = await createSingleLesson(
@@ -483,7 +485,9 @@ export const lessonsService = {
     if (!lesson_item_count || lesson_item_count <= 0) {
       const display_orderValue = await getNextOrderForChapter(questionSet.chapter_id);
       const totalItems = mergedItems.length;
-      const questionRange = totalItems > 0 ? `1 - ${totalItems}` : null;
+      const questionRange = totalItems > 0
+        ? `${mergedItems[0].question_label || 1} - ${mergedItems[totalItems - 1].question_label || totalItems}`
+        : null;
       const lessonId = await createSingleLesson(name, mergedItems, null, parent_section_name, questionRange, display_orderValue);
       return await this.findById(lessonId);
     }
@@ -497,11 +501,11 @@ export const lessonsService = {
 
     for (let i = 0; i < totalItems; i += lesson_item_count) {
       const chunkItems = mergedItems.slice(i, i + lesson_item_count);
-      const startNum = i + 1;
-      const endNum = Math.min(i + lesson_item_count, totalItems);
 
-      // Create question_range string (e.g., "1 - 10")
-      const questionRange = `${startNum} - ${endNum}`;
+      // Create question_range string using actual question labels
+      const firstLabel = chunkItems[0].question_label || (i + 1);
+      const lastLabel = chunkItems[chunkItems.length - 1].question_label || Math.min(i + lesson_item_count, totalItems);
+      const questionRange = `${firstLabel} - ${lastLabel}`;
 
       // Use lesson name without range appending, store range in question_range column
       // Pass parent_section_name for Auto Split mode (shared across all lessons)

@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { CheckCircle, Trash2, Eye, Filter } from 'lucide-react';
+import { CheckCircle, Trash2, Eye, Filter, Upload } from 'lucide-react';
 import SolutionSetModal from '../components/SolutionSetModal';
+import ImportSolutionsModal from '../components/ImportSolutionsModal';
 
 export default function ExtractedSolutionsPage() {
   const queryClient = useQueryClient();
   const [selectedSet, setSelectedSet] = useState(null);
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Fetch books for dropdown
   const { data: books } = useQuery({
@@ -59,6 +61,18 @@ export default function ExtractedSolutionsPage() {
     },
   });
 
+  // Import solution set mutation
+  const importMutation = useMutation({
+    mutationFn: (data) => api.post('/solution-sets/import', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['solutionSets'] });
+    },
+  });
+
+  const handleImport = async (data) => {
+    await importMutation.mutateAsync(data);
+  };
+
   const handleDelete = (e, id, name) => {
     e.stopPropagation();
     if (window.confirm(`Are you sure you want to delete "${name}"?`)) {
@@ -91,6 +105,13 @@ export default function ExtractedSolutionsPage() {
           <h1 className="text-2xl font-bold text-gray-800">Extracted Solutions</h1>
           <p className="text-gray-500 mt-1">View and manage extracted solution sets</p>
         </div>
+        <button
+          onClick={() => setIsImportModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+        >
+          <Upload className="w-4 h-4" />
+          Import JSON
+        </button>
       </div>
 
       {/* Filters */}
@@ -139,26 +160,26 @@ export default function ExtractedSolutionsPage() {
           <p className="text-gray-400 text-sm mt-1">Extract solutions from scanned items to see them here</p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        <div className="bg-white rounded-lg shadow-sm border overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                   Name
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">
                   Book / Chapter
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
                   Solutions
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">
                   Created
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                   Actions
                 </th>
               </tr>
@@ -170,41 +191,43 @@ export default function ExtractedSolutionsPage() {
                   className="hover:bg-gray-50 cursor-pointer"
                   onClick={() => setSelectedSet(set)}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4">
                     <div className="flex items-center">
-                      <CheckCircle className="w-5 h-5 text-purple-500 mr-3" />
-                      <span className="text-sm font-medium text-gray-900">{set.name}</span>
+                      <CheckCircle className="w-5 h-5 text-purple-500 mr-2 flex-shrink-0" />
+                      <span className="text-sm font-medium text-gray-900 truncate max-w-[200px]" title={set.name}>
+                        {set.name}
+                      </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">
+                  <td className="px-4 py-4">
+                    <div className="text-sm text-gray-500 truncate max-w-[180px]" title={`${set.book?.display_name || '-'}${set.chapter?.display_name ? ` / ${set.chapter.display_name}` : ''}`}>
                       {set.book?.display_name || '-'}
                       {set.chapter?.display_name && ` / ${set.chapter.display_name}`}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <span className="text-sm text-gray-900">{set.total_solutions || 0}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     {getStatusBadge(set.status)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(set.created_at).toLocaleString()}
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(set.created_at).toLocaleDateString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                  <td className="px-4 py-4 whitespace-nowrap text-right">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedSet(set);
                       }}
-                      className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg mr-2"
+                      className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg mr-1"
                       title="View"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
                       onClick={(e) => handleDelete(e, set.id, set.name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
                       title="Delete"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -222,6 +245,17 @@ export default function ExtractedSolutionsPage() {
         isOpen={!!selectedSet}
         onClose={() => setSelectedSet(null)}
         solutionSet={selectedSet}
+      />
+
+      {/* Import Solutions Modal */}
+      <ImportSolutionsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={handleImport}
+        books={books?.data}
+        chapters={chapters?.data}
+        selectedBookId={selectedBookId}
+        selectedChapterId={selectedChapterId}
       />
     </div>
   );

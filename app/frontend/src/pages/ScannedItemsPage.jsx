@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link } from 'lucide-react';
+import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link, Download } from 'lucide-react';
 import PDFViewerModal from '../components/PDFViewerModal';
 
 export default function ScannedItemsPage() {
@@ -48,6 +48,7 @@ export default function ScannedItemsPage() {
   const [extractFormData, setExtractFormData] = useState({
     name: '',
     type: 'Question Bank',
+    provider: 'llamaparse',
   });
 
   // Extract solutions modal state
@@ -55,6 +56,7 @@ export default function ScannedItemsPage() {
   const [extractSolutionsFormData, setExtractSolutionsFormData] = useState({
     name: '',
     type: 'Question Bank',
+    provider: 'llamaparse',
   });
 
   // Fetch books for dropdown
@@ -287,6 +289,7 @@ export default function ScannedItemsPage() {
     setExtractFormData({
       name: `Extraction ${new Date().toLocaleString()}`,
       type: 'Question Bank',
+      provider: 'llamaparse',
     });
     setShowExtractModal(true);
   };
@@ -297,6 +300,7 @@ export default function ScannedItemsPage() {
       item_ids: orderedIds,
       name: extractFormData.name,
       type: extractFormData.type,
+      provider: extractFormData.provider,
     });
     setShowExtractModal(false);
   };
@@ -306,6 +310,7 @@ export default function ScannedItemsPage() {
     setExtractSolutionsFormData({
       name: `Solution Extraction ${new Date().toLocaleString()}`,
       type: 'Question Bank',
+      provider: 'llamaparse',
     });
     setShowExtractSolutionsModal(true);
   };
@@ -316,6 +321,7 @@ export default function ScannedItemsPage() {
       item_ids: orderedIds,
       name: extractSolutionsFormData.name,
       type: extractSolutionsFormData.type,
+      provider: extractSolutionsFormData.provider,
     });
     setShowExtractSolutionsModal(false);
   };
@@ -346,6 +352,44 @@ export default function ScannedItemsPage() {
   const handleViewPdf = (item) => {
     setSelectedPdfItem(item);
     setPdfViewerOpen(true);
+  };
+
+  const handleDownloadPdf = async (item) => {
+    const fileName = item.item_data?.split('/').pop() || `scanned-item-${item.id}.pdf`;
+    const downloadName = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+
+    // For external URLs, open directly in new tab (avoids CORS issues)
+    if (item.item_data?.startsWith('http://') || item.item_data?.startsWith('https://')) {
+      const link = document.createElement('a');
+      link.href = item.item_data;
+      link.download = downloadName;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
+    // For stored PDFs (email_attachment, file_upload), fetch from backend
+    try {
+      const response = await fetch(`/api/scanned-items/${item.id}/pdf`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+      alert('Failed to download PDF');
+    }
   };
 
   const handleViewLatex = (item) => {
@@ -667,6 +711,15 @@ export default function ScannedItemsPage() {
                     </td>
                     <td className="px-4 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {canViewPdf(item) && (
+                          <button
+                            onClick={() => handleDownloadPdf(item)}
+                            className="text-blue-500 hover:text-blue-700"
+                            title="Download PDF"
+                          >
+                            <Download className="w-5 h-5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleViewLatex(item)}
                           className={`${item.latex_doc ? 'text-green-500 hover:text-green-700' : 'text-gray-300 cursor-not-allowed'}`}
@@ -1051,6 +1104,25 @@ export default function ScannedItemsPage() {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Extraction Provider
+                </label>
+                <select
+                  value={extractFormData.provider}
+                  onChange={(e) => setExtractFormData({ ...extractFormData, provider: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="llamaparse">LlamaParse</option>
+                  <option value="gemini">Gemini AI</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {extractFormData.provider === 'gemini'
+                    ? 'Uses Google Gemini AI for extraction (alternative when LlamaParse limit is reached)'
+                    : 'Default extraction provider using LlamaParse API'}
+                </p>
+              </div>
+
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="text-sm text-gray-600">
                   <span className="font-medium">Selected Items:</span>{' '}
@@ -1120,6 +1192,25 @@ export default function ScannedItemsPage() {
                   <option value="Question Bank">Question Bank</option>
                   <option value="Academic Book">Academic Book</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Extraction Provider
+                </label>
+                <select
+                  value={extractSolutionsFormData.provider}
+                  onChange={(e) => setExtractSolutionsFormData({ ...extractSolutionsFormData, provider: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="llamaparse">LlamaParse</option>
+                  <option value="gemini">Gemini AI</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {extractSolutionsFormData.provider === 'gemini'
+                    ? 'Uses Google Gemini AI for extraction (alternative when LlamaParse limit is reached)'
+                    : 'Default extraction provider using LlamaParse API'}
+                </p>
               </div>
 
               <div className="bg-gray-50 p-3 rounded-lg">
