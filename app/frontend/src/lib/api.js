@@ -1,7 +1,29 @@
+import { getAuthToken } from '../stores/authStore';
+
 const BASE_URL = '/api';
 
+/**
+ * Custom API Error class to provide more context about failures
+ */
+class ApiError extends Error {
+  constructor(message, statusCode, response) {
+    super(message);
+    this.name = 'ApiError';
+    this.statusCode = statusCode;
+    this.response = response;
+  }
+
+  get isAuthError() {
+    return this.statusCode === 401 || this.statusCode === 403;
+  }
+
+  get isNetworkError() {
+    return !this.statusCode || this.statusCode >= 500;
+  }
+}
+
 async function request(method, endpoint, data = null) {
-  const token = localStorage.getItem('token');
+  const token = getAuthToken();
 
   const config = {
     method,
@@ -15,14 +37,29 @@ async function request(method, endpoint, data = null) {
     config.body = JSON.stringify(data);
   }
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, config);
-  const json = await response.json();
+  try {
+    const response = await fetch(`${BASE_URL}${endpoint}`, config);
+    const json = await response.json();
 
-  if (!response.ok) {
-    throw new Error(json.error || 'Request failed');
+    if (!response.ok) {
+      const errorMessage = json.error || 'Request failed';
+      throw new ApiError(errorMessage, response.status, json);
+    }
+
+    return json;
+  } catch (error) {
+    // If it's already an ApiError, rethrow it
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    // Network error or other fetch failure
+    throw new ApiError(
+      error.message || 'Network request failed',
+      null,
+      null
+    );
   }
-
-  return json;
 }
 
 export const api = {
@@ -33,7 +70,7 @@ export const api = {
 
   // Upload files using FormData (no JSON content-type)
   async upload(endpoint, formData) {
-    const token = localStorage.getItem('token');
+    const token = getAuthToken();
 
     const config = {
       method: 'POST',
@@ -43,14 +80,29 @@ export const api = {
       body: formData,
     };
 
-    const response = await fetch(`${BASE_URL}${endpoint}`, config);
-    const json = await response.json();
+    try {
+      const response = await fetch(`${BASE_URL}${endpoint}`, config);
+      const json = await response.json();
 
-    if (!response.ok) {
-      throw new Error(json.error || 'Upload failed');
+      if (!response.ok) {
+        const errorMessage = json.error || 'Upload failed';
+        throw new ApiError(errorMessage, response.status, json);
+      }
+
+      return json;
+    } catch (error) {
+      // If it's already an ApiError, rethrow it
+      if (error instanceof ApiError) {
+        throw error;
+      }
+
+      // Network error or other fetch failure
+      throw new ApiError(
+        error.message || 'Upload request failed',
+        null,
+        null
+      );
     }
-
-    return json;
   },
 };
 

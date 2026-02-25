@@ -13,7 +13,18 @@ export const authenticate = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, config.jwtSecret);
 
-    // Fetch user from database
+    // Handle hardcoded admin user (doesn't exist in database)
+    if (decoded.userId === 'admin') {
+      req.user = {
+        id: 'admin',
+        email: 'admin@localhost',
+        name: 'Admin',
+        role: 'admin',
+      };
+      return next();
+    }
+
+    // Fetch regular user from database
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
@@ -41,6 +52,17 @@ export const optionalAuth = async (req, res, next) => {
 
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, config.jwtSecret);
+
+    // Handle hardcoded admin user (doesn't exist in database)
+    if (decoded.userId === 'admin') {
+      req.user = {
+        id: 'admin',
+        email: 'admin@localhost',
+        name: 'Admin',
+        role: 'admin',
+      };
+      return next();
+    }
 
     const { data: user } = await supabase
       .from('users')

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/authStore';
+import AuthInitializer from './components/AuthInitializer';
 import AppShell from './components/AppShell';
 import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
@@ -29,28 +30,30 @@ function ProtectedRoute({ children }) {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/*"
-          element={
-            <ProtectedRoute>
-              <AppShell>
-                <Routes>
-                  <Route path="/" element={<HomePage />} />
-                  <Route path="/scanned-items" element={<ScannedItemsPage />} />
-                  <Route path="/extracted-questions" element={<ExtractedQuestionsPage />} />
-                  <Route path="/extracted-solutions" element={<ExtractedSolutionsPage />} />
-                  <Route path="/lesson-folders" element={<LessonFoldersPage />} />
-                  <Route path="/lessons" element={<LessonsPage />} />
-                </Routes>
-              </AppShell>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+    <AuthInitializer>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <AppShell>
+                  <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/scanned-items" element={<ScannedItemsPage />} />
+                    <Route path="/extracted-questions" element={<ExtractedQuestionsPage />} />
+                    <Route path="/extracted-solutions" element={<ExtractedSolutionsPage />} />
+                    <Route path="/lesson-folders" element={<LessonFoldersPage />} />
+                    <Route path="/lessons" element={<LessonsPage />} />
+                  </Routes>
+                </AppShell>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </AuthInitializer>
   );
 }
 
