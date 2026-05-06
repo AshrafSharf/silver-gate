@@ -316,16 +316,33 @@ WHAT YOU MUST DO:
 3. Emit one entry PER block. If the input has 17 blocks visible to you, your "solutions" array MUST have 17 entries. If it has 8 blocks visible to you, the array MUST have 8 entries. The number of entries equals the number of marker pairs, ALWAYS.
 
 LABELING (question_label) AND ANSWER (answer_key):
-- Inside each block, the FIRST line is the solution header in one of these forms:
-    * "8. (D)"            → question_label = "8",  answer_key = "D"
-    * "12. (B)"           → question_label = "12", answer_key = "B"
-    * "22. (11.00)"       → question_label = "22", answer_key = "11.00"
-    * "5) C"              → question_label = "5",  answer_key = "C"
-    * "Q3. (a)"           → question_label = "3",  answer_key = "a"
-    * "\\section*{8. (D)}" → question_label = "8",  answer_key = "D"
-- These numbers/answers are GLOBAL — they refer to the whole document. ALWAYS copy the values you literally see inside the block. NEVER renumber, NEVER reset to "1" because you think it's the first block.
+- The header is the FIRST non-empty line inside each block (skip any blank lines that appear right after ${S_START_MARKER}). It always carries the question number and may also carry an answer key.
+- THE PRIMARY HEADER FORM is ":<number>)." — a literal colon, followed by digits, followed by ")." (e.g. ":1).", ":2).", ":10).", ":12).", ":99)."). The colon is REQUIRED at the start. The number BETWEEN the colon and the ")." is question_label. There is NO answer key on this form, so answer_key = "".
+- Recognize ALL of these header forms — the number is question_label, the value in parentheses (when present) is answer_key:
+    * ":1)."                  → question_label = "1",  answer_key = ""    (PRIMARY long-answer form)
+    * ":2)."                  → question_label = "2",  answer_key = ""
+    * ":10)."                 → question_label = "10", answer_key = ""
+    * ":12)."                 → question_label = "12", answer_key = ""
+    * ":1). HCF and LCM ..."  → question_label = "1",  answer_key = ""    (header may be followed by question text on the same line — strip ":1)." from the label, keep the rest in worked_solution)
+    * "1)."  (no leading colon, legacy)  → question_label = "1",  answer_key = ""
+    * "10)." (no leading colon, legacy)  → question_label = "10", answer_key = ""
+    * "8. (D)"                → question_label = "8",  answer_key = "D"
+    * "12. (B)"               → question_label = "12", answer_key = "B"
+    * "22. (11.00)"           → question_label = "22", answer_key = "11.00"
+    * "5) C"                  → question_label = "5",  answer_key = "C"
+    * "Q3. (a)"               → question_label = "3",  answer_key = "a"
+    * "\\section*{8. (D)}"    → question_label = "8",  answer_key = "D"
+- LABEL EXTRACTION RULE for ":<number>)." headers: take everything BETWEEN the leading ":" and the ")." — that's question_label. Drop the ":" and the ")." themselves. Examples: ":1)." → "1", ":12)." → "12", ":7). Part 1: Prove..." → "7".
+- The patterns ":<number>)." and "<number>)." are LONG-ANSWER header forms. They carry NO answer key; set answer_key = "". DO NOT invent one. DO NOT mistake them for MCQs.
+- These numbers/answers are GLOBAL — they refer to the whole document. ALWAYS copy the values you literally see in the header line of the block. NEVER renumber, NEVER reset to "1" because you think it's the first block.
+- IGNORE any numbered list ("1.", "2.", "3.", "1)", "2)", "(i)", "(ii)", "Step 1", "Step 2", "Part 1", "Part 2") that appears INSIDE the block body AFTER the header. Those are sub-steps of the solution, NOT new question headers. Only the FIRST non-empty line of the block determines question_label and answer_key.
 - If the header is malformed and you cannot find an answer key, set answer_key to "" (empty string), do NOT invent one.
 - If a block has NO leading number at all (rare; malformed), use the string form of the block's 1-based ordinal in YOUR view as question_label (still emit it; do not skip).
+
+CRITICAL ANTI-PATTERN — DO NOT DO THIS:
+- A block whose FIRST non-empty line is ":6)." but whose body contains "1. Assumption:", "2. Squaring...", "3. Substituting..." is ONE solution with question_label = "6". It is NOT five solutions labeled 1, 2, 3. Those numbered lines are PROOF STEPS inside solution 6.
+- A block whose FIRST non-empty line is ":10)." followed by "1. Algebraic Identity", "2. Property of Odd Numbers", "3. Analyzing the Factors" is ONE solution with question_label = "10". The internal "1.", "2.", "3." are SUB-STEPS, not new questions.
+- The rule is mechanical: count ${S_START_MARKER} markers; that is the number of entries you emit. Period. The block boundary is the marker, NEVER an internal numbered list.
 
 VISUAL_PATH:
 - If the block contains an image reference of the form ![](URL), set visual_path to JUST the URL (no markdown, no parentheses).
@@ -334,6 +351,9 @@ VISUAL_PATH:
 
 WORKED_SOLUTION:
 - Take the block content AFTER the header line and AFTER any image markdown line.
+- If the header line is ":<number>). <some text>" (e.g. ":1). HCF and LCM Compatibility"), the part AFTER ":<number>)." on the same line is the START of the question/solution body — keep it in worked_solution. Only the ":<number>)." token itself is stripped.
+- If the header line is just ":<number>)." on its own line, the worked_solution starts on the NEXT non-empty line.
+- The legacy "<number>)." form (without leading colon) is stripped the same way.
 - Include EVERY remaining line: equations, $\\begin{aligned}...\\end{aligned}$ / $\\begin{gathered}...\\end{gathered}$ blocks, transitional text ("Therefore", "Hence", "Equation will become"), and the final answer.
 - Preserve all LaTeX exactly ($...$, $$...$$, \\begin{...}\\end{...}, sub-parts (i)/(ii)/(iii)).
 - Join multiple lines with \\n.
@@ -363,7 +383,7 @@ OUTPUT FORMAT:
   }
 - No markdown code fences. No commentary. No preamble. The response must start with { and end with }.
 
-EXAMPLE INPUT (a 3-block excerpt):
+EXAMPLE INPUT (a 5-block excerpt):
 \\section*{ANSWER KEY}
 
 ${S_START_MARKER}
@@ -385,11 +405,25 @@ $A(2,6,2) B(-4,0,\\lambda)$
 $5 - 6\\lambda = 11$
 ${S_END_MARKER}
 
+${S_START_MARKER}
+:1). HCF and LCM Compatibility
+- Property: For any two numbers, the HCF must be a factor of the LCM.
+- Conclusion: 380 is not divisible by 18, so it's impossible.
+${S_END_MARKER}
+
+${S_START_MARKER}
+:10).
+1. Algebraic Identity: $p^{2}-q^{2}=(p-q)(p+q)$
+2. Both $(p-q)$ and $(p+q)$ are even, so $p^{2}-q^{2}$ is composite.
+${S_END_MARKER}
+
 EXAMPLE OUTPUT:
 { "solutions": [
   { "question_label": "7",  "answer_key": "D",     "visual_path": "",                                          "worked_solution": "$\\sin^{-1}(2x) + \\cos^{-1}(2x) = \\pi/2$\\n$x = \\frac{1}{4}$", "explanation": "" },
   { "question_label": "8",  "answer_key": "B",     "visual_path": "https://cdn.mathpix.com/cropped/xxx.jpg",   "worked_solution": "Equation will become\\n$x^2 - y^2 = 10xy$", "explanation": "" },
-  { "question_label": "22", "answer_key": "11.00", "visual_path": "",                                          "worked_solution": "$A(2,6,2) B(-4,0,\\lambda)$\\n$5 - 6\\lambda = 11$", "explanation": "" }
+  { "question_label": "22", "answer_key": "11.00", "visual_path": "",                                          "worked_solution": "$A(2,6,2) B(-4,0,\\lambda)$\\n$5 - 6\\lambda = 11$", "explanation": "" },
+  { "question_label": "1",  "answer_key": "",      "visual_path": "",                                          "worked_solution": "HCF and LCM Compatibility\\n- Property: For any two numbers, the HCF must be a factor of the LCM.\\n- Conclusion: 380 is not divisible by 18, so it's impossible.", "explanation": "" },
+  { "question_label": "10", "answer_key": "",      "visual_path": "",                                          "worked_solution": "1. Algebraic Identity: $p^{2}-q^{2}=(p-q)(p+q)$\\n2. Both $(p-q)$ and $(p+q)$ are even, so $p^{2}-q^{2}$ is composite.", "explanation": "" }
 ] }
 
 FINAL CHECK BEFORE RESPONDING:
@@ -499,34 +533,55 @@ export const solutionExtractionService = {
 
       // Get source type for instructions
       const sourceType = solutionSet.source_type || 'Question Bank';
-      let rawResult;
+      let parsedSolutions;
 
-      if (provider === SOLUTION_EXTRACTION_PROVIDERS.GEMINI) {
-        // Use Gemini for extraction
-        console.log(`[SOLUTION_EXTRACT] Using Gemini AI for extraction`);
-        rawResult = await this.extractWithGemini(combinedContent, sourceType, hasMarkers);
-        console.log(`[SOLUTION_EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      if (hasMarkers) {
+        // Marker mode: block boundaries are explicit and parsing is mechanical.
+        // The LLM was unreliable here (logs showed it returning 5 entries for
+        // 10 markers by collapsing multi-step proof solutions), so bypass it
+        // entirely and parse blocks deterministically in code.
+        console.log(`[SOLUTION_EXTRACT] Marker mode detected — using deterministic in-code parser (LLM bypassed)`);
+        parsedSolutions = this.parseMarkerBlocks(combinedContent);
+        console.log(`[SOLUTION_EXTRACT] Deterministic marker parse: ${parsedSolutions.solutions.length} solutions`);
       } else {
-        // Use LlamaParse for extraction (default)
-        console.log(`[SOLUTION_EXTRACT] Using LlamaParse for extraction`);
-        const jobId = await this.submitToLlamaParse(combinedContent, sourceType, hasMarkers);
+        let rawResult;
 
-        // Store the job ID
-        await supabase
-          .from('solution_sets')
-          .update({ llamaparse_job_id: jobId })
-          .eq('id', solutionSetId);
+        if (provider === SOLUTION_EXTRACTION_PROVIDERS.GEMINI) {
+          // Use Gemini for extraction
+          console.log(`[SOLUTION_EXTRACT] Using Gemini AI for extraction`);
+          rawResult = await this.extractWithGemini(combinedContent, sourceType, hasMarkers);
+          console.log(`[SOLUTION_EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        } else {
+          // Use LlamaParse for extraction (default)
+          console.log(`[SOLUTION_EXTRACT] Using LlamaParse for extraction`);
+          const jobId = await this.submitToLlamaParse(combinedContent, sourceType, hasMarkers);
 
-        // Poll for completion
-        rawResult = await this.pollForCompletion(jobId);
-        console.log(`[SOLUTION_EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+          // Store the job ID
+          await supabase
+            .from('solution_sets')
+            .update({ llamaparse_job_id: jobId })
+            .eq('id', solutionSetId);
+
+          // Poll for completion
+          rawResult = await this.pollForCompletion(jobId);
+          console.log(`[SOLUTION_EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        }
+
+        console.log(`[SOLUTION_EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
+
+        parsedSolutions = this.parseSolutionsFromContent(rawResult, { skipDedup: false });
+        console.log(`[SOLUTION_EXTRACT] Parsed solutions count: ${parsedSolutions.solutions?.length || 0}`);
       }
 
-      console.log(`[SOLUTION_EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
-
-      // Parse the result into solution format
-      const parsedSolutions = this.parseSolutionsFromContent(rawResult);
-      console.log(`[SOLUTION_EXTRACT] Parsed solutions count: ${parsedSolutions.solutions?.length || 0}`);
+      if (hasMarkers) {
+        const expectedCount = (combinedContent.match(new RegExp(S_START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        const gotCount = parsedSolutions.solutions?.length || 0;
+        if (gotCount !== expectedCount) {
+          console.warn(`[SOLUTION_EXTRACT] ⚠️ Marker count mismatch: input has ${expectedCount} ${S_START_MARKER} markers but parser returned ${gotCount} solutions`);
+        } else {
+          console.log(`[SOLUTION_EXTRACT] ✓ Marker count matches: ${gotCount} solutions for ${expectedCount} markers`);
+        }
+      }
 
       // Extract visual paths (image URLs) from original LaTeX content - ONLY extracts URLs, does not modify content
       const visualPathSolutions = this.extractVisualPaths(parsedSolutions, combinedContent);
@@ -937,13 +992,122 @@ IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not includ
   },
 
   /**
+   * Deterministically split pre-extracted content by <<<S_START>>> / <<<S_END>>>
+   * markers and parse each block's header into question_label / answer_key.
+   *
+   * Used in marker mode to bypass the LLM entirely — when boundaries are
+   * explicit, parsing is mechanical and the LLM was observed to merge or skip
+   * blocks (returning 5 entries for 10 markers on multi-step proof content).
+   *
+   * Recognized header forms (first non-empty line of each block):
+   *   ":<n>)."  / ":<n>). <text>"   → label=<n>, key=""   (primary long-answer)
+   *   "<n>)."   / "<n>). <text>"    → label=<n>, key=""   (legacy long-answer)
+   *   "<n>. (X)" / "<n>. (X) <txt>" → label=<n>, key=X    (MCQ with parens)
+   *   "<n>) X"  / "<n>) X <text>"   → label=<n>, key=X    (MCQ no parens)
+   *   "Q<n>. (a)"                   → label=<n>, key=a
+   *   "\section*{<n>. (X)}"         → label=<n>, key=X
+   */
+  parseMarkerBlocks(combinedContent) {
+    const startToken = S_START_MARKER;
+    const endToken = S_END_MARKER;
+    const solutions = [];
+    let cursor = 0;
+
+    while (true) {
+      const startIdx = combinedContent.indexOf(startToken, cursor);
+      if (startIdx === -1) break;
+      const endIdx = combinedContent.indexOf(endToken, startIdx + startToken.length);
+      if (endIdx === -1) {
+        console.warn(`[SOLUTION_EXTRACT] Unmatched ${startToken} at position ${startIdx} — stopping`);
+        break;
+      }
+
+      const blockContent = combinedContent.substring(startIdx + startToken.length, endIdx);
+      cursor = endIdx + endToken.length;
+
+      const lines = blockContent.split('\n');
+      let headerIdx = 0;
+      while (headerIdx < lines.length && lines[headerIdx].trim() === '') headerIdx++;
+
+      if (headerIdx >= lines.length) {
+        console.warn(`[SOLUTION_EXTRACT] Empty block #${solutions.length + 1} between markers — emitting placeholder`);
+        solutions.push({
+          question_label: String(solutions.length + 1),
+          answer_key: '',
+          visual_path: '',
+          worked_solution: '',
+          explanation: '',
+        });
+        continue;
+      }
+
+      const headerLine = lines[headerIdx];
+      let questionLabel = '';
+      let answerKey = '';
+      let headerRemainder = '';
+      let m;
+
+      if ((m = headerLine.match(/^\s*:\s*(\d+)\s*\)\s*\.\s*(.*)$/))) {
+        // Primary: ":<n>)." or ":<n>). <text>"
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else if ((m = headerLine.match(/^\s*\\section\*\{\s*(\d+)\s*\.\s*\(\s*([^)]+?)\s*\)\s*\}\s*(.*)$/))) {
+        // "\section*{<n>. (X)}"
+        questionLabel = m[1];
+        answerKey = m[2];
+        headerRemainder = m[3].trim();
+      } else if ((m = headerLine.match(/^\s*(?:Q\.?\s*)?(\d+)\s*\.\s*\(\s*([^)]+?)\s*\)\s*(.*)$/i))) {
+        // MCQ with parens: "<n>. (X)" / "Q<n>. (a)"
+        questionLabel = m[1];
+        answerKey = m[2];
+        headerRemainder = m[3].trim();
+      } else if ((m = headerLine.match(/^\s*(\d+)\s*\)\s*\.\s*(.*)$/))) {
+        // Legacy long-answer: "<n>)."
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else if ((m = headerLine.match(/^\s*(\d+)\s*\)\s*([A-Ea-e](?![A-Za-z]))\s*(.*)$/))) {
+        // MCQ no parens: "<n>) X" (single letter A–E only, to avoid swallowing words)
+        questionLabel = m[1];
+        answerKey = m[2];
+        headerRemainder = m[3].trim();
+      } else {
+        // Malformed header — fall back to ordinal, keep header line in body
+        console.warn(`[SOLUTION_EXTRACT] Block #${solutions.length + 1} has malformed header: ${JSON.stringify(headerLine.slice(0, 80))} — using ordinal label`);
+        questionLabel = String(solutions.length + 1);
+        headerRemainder = headerLine.trim();
+      }
+
+      const bodyLines = [];
+      if (headerRemainder) bodyLines.push(headerRemainder);
+      for (let i = headerIdx + 1; i < lines.length; i++) bodyLines.push(lines[i]);
+
+      while (bodyLines.length > 0 && bodyLines[0].trim() === '') bodyLines.shift();
+      while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === '') bodyLines.pop();
+
+      const workedSolution = bodyLines.join('\n');
+
+      solutions.push({
+        question_label: questionLabel,
+        answer_key: answerKey,
+        visual_path: '',
+        worked_solution: workedSolution,
+        explanation: '',
+      });
+    }
+
+    console.log(`[SOLUTION_EXTRACT] parseMarkerBlocks: extracted ${solutions.length} blocks`);
+    return { solutions };
+  },
+
+  /**
    * Parse extracted content into solution JSON format
    * @param {string} rawContent - Raw extracted content from LlamaParse
    * @returns {object} - Structured solutions object
    */
-  parseSolutionsFromContent(rawContent) {
+  parseSolutionsFromContent(rawContent, options = {}) {
+    const { skipDedup = false } = options;
     try {
-      console.log(`[SOLUTION_EXTRACT] Starting to parse raw content of length: ${rawContent.length}`);
+      console.log(`[SOLUTION_EXTRACT] Starting to parse raw content of length: ${rawContent.length}${skipDedup ? ' (dedup disabled — marker mode)' : ''}`);
 
       // Find ALL JSON objects with "solutions" arrays and merge them
       const allSolutions = [];
@@ -1052,6 +1216,14 @@ IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not includ
       }
 
       if (allSolutions.length > 0) {
+        // In marker mode, every block is guaranteed unique by its <<<S_START>>> / <<<S_END>>>
+        // pair — so question_label collisions are LLM mis-labels, not real duplicates.
+        // Dropping them would silently lose real solutions. Skip dedup entirely.
+        if (skipDedup) {
+          console.log(`[SOLUTION_EXTRACT] Total merged solutions: ${allSolutions.length} (dedup skipped — trusting markers)`);
+          return { solutions: allSolutions };
+        }
+
         // Deduplicate solutions by question_label
         const uniqueSolutions = [];
         const seenLabels = new Set();
