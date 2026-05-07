@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../../../config/database.js';
 import { getMongoConnection } from '../../../config/mongoConnection.js';
 import { BaseReverseSyncer } from '../base.reverse-syncer.js';
-import { toObjectId, toDBRef } from '../helpers.js';
+import { toObjectId, toDBRef, tallyGroup } from '../helpers.js';
 import logger from '../../../utils/logger.js';
 
 class LessonReverseSyncer extends BaseReverseSyncer {
@@ -33,23 +33,45 @@ class LessonReverseSyncer extends BaseReverseSyncer {
       }
     }
 
-    // Load chapter ref_ids: { supabase_id: ref_id }
+    // Load chapter ref_ids and human-readable labels for the run summary.
     const { data: chapters, error: chaptersError } = await supabaseAdmin
       .from('chapters')
-      .select('id, ref_id');
+      .select('id, ref_id, name, display_name, chapter_number');
 
     if (chaptersError) {
       throw new Error(`Failed to fetch chapters: ${chaptersError.message}`);
     }
 
     context.chapterRefIds = {};
+    context.chapterLabels = {};
     for (const chapter of chapters || []) {
       if (chapter.ref_id) {
         context.chapterRefIds[chapter.id] = chapter.ref_id;
       }
+      const label = chapter.display_name || chapter.name || null;
+      if (label) {
+        context.chapterLabels[chapter.id] = chapter.chapter_number
+          ? `Ch ${chapter.chapter_number}: ${label}`
+          : label;
+      }
     }
 
     return context;
+  }
+
+  /**
+   * Per-group key: bucket inserts/skips by source chapter_id so the run
+   * summary can show "chapter X: N lessons inserted".
+   */
+  getGroupKey(item /* , context */) {
+    return item.chapter_id || null;
+  }
+
+  /**
+   * Human-readable label: "Ch 3: Algebra Basics".
+   */
+  getGroupLabel(item, context) {
+    return context?.chapterLabels?.[item.chapter_id] || null;
   }
 
   /**
@@ -105,11 +127,13 @@ class LessonReverseSyncer extends BaseReverseSyncer {
 
       // Filter to only new documents
       const newDocuments = documents.filter(doc => !existingIds.has(doc._id.toString()));
-      const skippedCount = documents.length - newDocuments.length;
+      const skippedDocuments = documents.filter(doc => existingIds.has(doc._id.toString()));
+      const skippedCount = skippedDocuments.length;
 
       if (skippedCount > 0) {
         logger.info(this.logTag, `Skipping ${skippedCount} existing records`);
         stats.skipped += skippedCount;
+        for (const doc of skippedDocuments) tallyGroup(stats, 'skipped', doc.__groupKey, doc.__groupLabel);
       }
 
       if (newDocuments.length === 0) {
@@ -140,9 +164,9 @@ class LessonReverseSyncer extends BaseReverseSyncer {
         logger.warn(this.logTag, `Delete conflicts error (continuing): ${error.message}`);
       }
 
-      // Insert only new documents
+      // Insert only new documents (strip the transient __groupKey/__groupLabel fields)
       const now = new Date();
-      const documentsToInsert = newDocuments.map(doc => ({
+      const documentsToInsert = newDocuments.map(({ __groupKey, __groupLabel, ...doc }) => ({
         ...doc,
         created_at: now,
         updated_at: now,
@@ -155,6 +179,7 @@ class LessonReverseSyncer extends BaseReverseSyncer {
 
       const result = await collection.insertMany(documentsToInsert, { ordered: false });
       stats.inserted += result.insertedCount;
+      for (const doc of newDocuments) tallyGroup(stats, 'inserted', doc.__groupKey, doc.__groupLabel);
       logger.info(this.logTag, `Batch result - Inserted: ${result.insertedCount}, Skipped: ${skippedCount}`);
 
       // Verify documents exist after insert

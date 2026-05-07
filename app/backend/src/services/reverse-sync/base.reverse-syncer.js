@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../../config/database.js';
 import { getMongoConnection } from '../../config/mongoConnection.js';
 import logger from '../../utils/logger.js';
-import { BATCH_SIZE, createStats, finalizeStats, logProgress } from './helpers.js';
+import { BATCH_SIZE, createStats, finalizeStats, logProgress, tallyGroup } from './helpers.js';
 
 const PAGE_SIZE = 1000;
 
@@ -64,7 +64,10 @@ export class BaseReverseSyncer {
   }
 
   /**
-   * Batch insert documents to MongoDB (skip existing records)
+   * Batch insert documents to MongoDB (skip existing records). Each document
+   * may carry a transient `__groupKey` field (added by `sync()`); we use it
+   * to attribute the insert/skip to a per-group bucket and strip it before
+   * sending to MongoDB.
    */
   async batchUpsert(documents, stats) {
     if (documents.length === 0) return;
@@ -83,11 +86,13 @@ export class BaseReverseSyncer {
 
       // Filter to only new documents
       const newDocuments = documents.filter(doc => !existingIds.has(doc._id.toString()));
-      const skippedCount = documents.length - newDocuments.length;
+      const skippedDocuments = documents.filter(doc => existingIds.has(doc._id.toString()));
+      const skippedCount = skippedDocuments.length;
 
       if (skippedCount > 0) {
         logger.info(this.logTag, `Skipping ${skippedCount} existing records`);
         stats.skipped += skippedCount;
+        for (const doc of skippedDocuments) tallyGroup(stats, 'skipped', doc.__groupKey, doc.__groupLabel);
       }
 
       if (newDocuments.length === 0) {
@@ -95,9 +100,9 @@ export class BaseReverseSyncer {
         return;
       }
 
-      // Insert only new documents
+      // Insert only new documents (strip the transient __groupKey/__groupLabel fields)
       const now = new Date();
-      const documentsToInsert = newDocuments.map(doc => ({
+      const documentsToInsert = newDocuments.map(({ __groupKey, __groupLabel, ...doc }) => ({
         ...doc,
         created_at: now,
         updated_at: now,
@@ -105,6 +110,7 @@ export class BaseReverseSyncer {
 
       const result = await collection.insertMany(documentsToInsert, { ordered: false });
       stats.inserted += result.insertedCount;
+      for (const doc of newDocuments) tallyGroup(stats, 'inserted', doc.__groupKey, doc.__groupLabel);
       logger.info(this.logTag, `Batch result - Inserted: ${result.insertedCount}, Skipped: ${skippedCount}`);
     } catch (error) {
       // Handle duplicate key errors gracefully (in case of race conditions)
@@ -139,6 +145,25 @@ export class BaseReverseSyncer {
   }
 
   /**
+   * Optional hook for subclasses: derive a grouping key for the per-group
+   * stats breakdown (e.g. chapter_id for lessons, parent exercise_id for
+   * lesson_items). Returning `null` / `undefined` buckets the row under
+   * "_unknown".
+   */
+  getGroupKey(/* sourceItem, context */) {
+    return null;
+  }
+
+  /**
+   * Optional hook: human-readable label for the group (e.g. chapter name).
+   * Stored once per group key in `stats.byGroup.labels` so the run summary
+   * can render it next to the ID.
+   */
+  getGroupLabel(/* sourceItem, context */) {
+    return null;
+  }
+
+  /**
    * Main sync orchestration method
    */
   async sync() {
@@ -168,19 +193,28 @@ export class BaseReverseSyncer {
 
       for (const item of supabaseData) {
         try {
+          const groupKey = this.getGroupKey(item, context);
+          const groupLabel = this.getGroupLabel(item, context);
+
           // Skip items without ref_id
           if (!item.ref_id) {
             skippedNoRefId++;
             stats.skipped++;
+            tallyGroup(stats, 'skipped', groupKey, groupLabel);
             continue;
           }
 
           const document = this.transformItem(item, context);
           if (document) {
+            // Tag the document so batchUpsert can attribute insert/skip
+            // back to the right group bucket. Stripped before mongo insert.
+            document.__groupKey = groupKey;
+            document.__groupLabel = groupLabel;
             batch.push(document);
           } else {
             skippedNullTransform++;
             stats.skipped++;
+            tallyGroup(stats, 'skipped', groupKey, groupLabel);
           }
 
           if (batch.length >= BATCH_SIZE) {

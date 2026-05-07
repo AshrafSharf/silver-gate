@@ -25,7 +25,11 @@ export function toDBRef(collection, id) {
 }
 
 /**
- * Create initial sync stats object
+ * Create initial sync stats object.
+ *
+ * `byGroup` carries per-group breakdowns (e.g. inserts grouped by chapter_id
+ * for lessons, or by parent exercise_id for lesson_items). Each syncer
+ * decides its grouping key by overriding `getGroupKey()`.
  */
 export function createStats() {
   return {
@@ -36,7 +40,29 @@ export function createStats() {
     errors: 0,
     startTime: Date.now(),
     endTime: null,
+    byGroup: {
+      inserted: {},
+      skipped: {},
+      labels: {},
+    },
   };
+}
+
+/**
+ * Increment the per-group counter for a given outcome ("inserted" or
+ * "skipped"). Falls back to "_unknown" when the syncer didn't supply a key.
+ * If `label` is supplied (e.g. a human-readable chapter name), it is stored
+ * once in `stats.byGroup.labels[key]` so the script can render it.
+ */
+export function tallyGroup(stats, kind, key, label = null) {
+  if (!stats.byGroup) return;
+  const bucket = stats.byGroup[kind];
+  if (!bucket) return;
+  const groupKey = key == null || key === '' ? '_unknown' : String(key);
+  bucket[groupKey] = (bucket[groupKey] || 0) + 1;
+  if (label && stats.byGroup.labels && !stats.byGroup.labels[groupKey]) {
+    stats.byGroup.labels[groupKey] = String(label);
+  }
 }
 
 /**
