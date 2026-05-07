@@ -64,21 +64,30 @@ export const scannedItemService = {
     return data;
   },
 
-  // Create a scanned item using the active job's book/chapter/item_type
+  // Create a scanned item. Prefer explicit book_id/chapter_id/item_type from
+  // the caller (the new client-side active context); fall back to the legacy
+  // jobs-table active job only when those aren't provided.
   async create(itemData) {
-    // Get active job to get current book/chapter/item_type
-    const activeJob = await jobService.getActiveJob();
+    let bookId = itemData.book_id;
+    let chapterId = itemData.chapter_id;
+    let itemType = itemData.item_type;
 
-    if (!activeJob) {
-      throw new Error('No active job configured. Please set an active book and chapter first.');
+    if (!bookId || !chapterId) {
+      const activeJob = await jobService.getActiveJob();
+      if (!activeJob) {
+        throw new Error('book_id and chapter_id are required (no active job fallback found).');
+      }
+      bookId = bookId || activeJob.active_book_id;
+      chapterId = chapterId || activeJob.active_chapter_id;
+      itemType = itemType || activeJob.active_item_type;
     }
 
     const { data, error } = await supabase
       .from('scanned_items')
       .insert({
-        book_id: activeJob.active_book_id,
-        chapter_id: activeJob.active_chapter_id,
-        item_type: activeJob.active_item_type || 'question',
+        book_id: bookId,
+        chapter_id: chapterId,
+        item_type: itemType || 'question',
         item_data: itemData.item_data,
         scan_type: itemData.scan_type,
         status: itemData.status || 'pending',
@@ -128,13 +137,22 @@ export const scannedItemService = {
     }
   },
 
-  // Create scanned item from uploaded file (uses active job)
-  async createWithFileUpload({ filename, buffer, mimetype }) {
-    // Get active job to get current book/chapter/item_type
-    const activeJob = await jobService.getActiveJob();
+  // Create scanned item from uploaded file. Prefer explicit
+  // book_id/chapter_id/item_type from the caller; fall back to the legacy
+  // active-job lookup only when missing.
+  async createWithFileUpload({ filename, buffer, mimetype, book_id, chapter_id, item_type }) {
+    let bookId = book_id;
+    let chapterId = chapter_id;
+    let itemType = item_type;
 
-    if (!activeJob) {
-      throw new Error('No active job configured. Please set an active book and chapter first.');
+    if (!bookId || !chapterId) {
+      const activeJob = await jobService.getActiveJob();
+      if (!activeJob) {
+        throw new Error('book_id and chapter_id are required (no active job fallback found).');
+      }
+      bookId = bookId || activeJob.active_book_id;
+      chapterId = chapterId || activeJob.active_chapter_id;
+      itemType = itemType || activeJob.active_item_type;
     }
 
     // Store the PDF content as base64 for the BYTEA field
@@ -143,9 +161,9 @@ export const scannedItemService = {
     const { data, error } = await supabase
       .from('scanned_items')
       .insert({
-        book_id: activeJob.active_book_id,
-        chapter_id: activeJob.active_chapter_id,
-        item_type: activeJob.active_item_type || 'question',
+        book_id: bookId,
+        chapter_id: chapterId,
+        item_type: itemType || 'question',
         item_data: filename,
         content: base64Content,
         scan_type: 'file_upload',

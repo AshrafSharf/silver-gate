@@ -142,7 +142,7 @@ router.get('/:id/pdf', asyncHandler(async (req, res) => {
 
 // Create scanned item (uses active job's book/chapter)
 router.post('/', asyncHandler(async (req, res) => {
-  const { item_data, scan_type, status, metadata } = req.body;
+  const { item_data, scan_type, status, metadata, book_id, chapter_id, item_type } = req.body;
 
   if (!item_data) {
     return res.status(400).json({ success: false, error: 'item_data is required' });
@@ -153,6 +153,9 @@ router.post('/', asyncHandler(async (req, res) => {
     scan_type,
     status,
     metadata,
+    book_id,
+    chapter_id,
+    item_type,
   });
   res.status(201).json({ success: true, data: item });
 }));
@@ -177,16 +180,23 @@ router.post('/manual', asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: item });
 }));
 
-// Upload PDF file (uses active job's book/chapter)
+// Upload PDF file. The client passes book_id/chapter_id/item_type as form
+// fields alongside the file (multer parses them into req.body). Falls back
+// to the legacy active-job lookup if those are missing.
 router.post('/upload', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: 'No PDF file uploaded' });
   }
 
+  const { book_id, chapter_id, item_type } = req.body || {};
+
   const item = await scannedItemService.createWithFileUpload({
     filename: req.file.originalname,
     buffer: req.file.buffer,
     mimetype: req.file.mimetype,
+    book_id,
+    chapter_id,
+    item_type,
   });
 
   res.status(201).json({ success: true, data: item });

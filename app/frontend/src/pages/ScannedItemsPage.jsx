@@ -211,14 +211,24 @@ export default function ScannedItemsPage() {
   });
 
   const handleAddItem = () => {
+    if (!selectedBookId || !selectedChapterId) {
+      alert('Please select a book and chapter before adding an item.');
+      return;
+    }
     if (uploadMode === 'file' && selectedFile) {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('book_id', selectedBookId);
+      formData.append('chapter_id', selectedChapterId);
+      formData.append('item_type', activeTab);
       uploadFileMutation.mutate(formData);
     } else if (uploadMode === 'url' && newItemData.trim()) {
       addItemMutation.mutate({
         item_data: newItemData,
         scan_type: newScanType,
+        book_id: selectedBookId,
+        chapter_id: selectedChapterId,
+        item_type: activeTab,
       });
     }
   };
