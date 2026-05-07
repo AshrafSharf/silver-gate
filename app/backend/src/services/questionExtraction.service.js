@@ -350,36 +350,59 @@ export const questionExtractionService = {
 
       // Get source type for instructions
       const sourceType = questionSet.source_type || 'Question Bank';
-      let rawResult;
+      let questions;
 
-      if (provider === EXTRACTION_PROVIDERS.GEMINI) {
-        // Use Gemini for extraction
-        console.log(`[EXTRACT] Using Gemini AI for extraction`);
-        rawResult = await this.extractWithGemini(combinedContent, sourceType, numberOfQuestions, hasMarkers);
-        console.log(`[EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+      if (hasMarkers) {
+        // Marker mode: block boundaries are explicit and parsing is mechanical.
+        // The LLM was unreliable on multi-block input (mirroring the solution
+        // extraction bug where it returned 5 entries for 10 markers), so bypass
+        // it entirely and parse blocks deterministically in code.
+        console.log(`[EXTRACT] Marker mode detected — using deterministic in-code parser (LLM bypassed)`);
+        questions = this.parseMarkerBlocks(combinedContent);
+        console.log(`[EXTRACT] Deterministic marker parse: ${questions.questions.length} questions`);
       } else {
-        // Use LlamaParse for extraction (default)
-        console.log(`[EXTRACT] Using LlamaParse for extraction`);
-        const jobId = await this.submitToLlamaParse(combinedContent, sourceType, numberOfQuestions, hasMarkers);
+        let rawResult;
 
-        // Store the job ID
-        await supabase
-          .from('question_sets')
-          .update({ llamaparse_job_id: jobId })
-          .eq('id', questionSetId);
+        if (provider === EXTRACTION_PROVIDERS.GEMINI) {
+          // Use Gemini for extraction
+          console.log(`[EXTRACT] Using Gemini AI for extraction`);
+          rawResult = await this.extractWithGemini(combinedContent, sourceType, numberOfQuestions, hasMarkers);
+          console.log(`[EXTRACT] Gemini raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        } else {
+          // Use LlamaParse for extraction (default)
+          console.log(`[EXTRACT] Using LlamaParse for extraction`);
+          const jobId = await this.submitToLlamaParse(combinedContent, sourceType, numberOfQuestions, hasMarkers);
 
-        // Poll for completion
-        rawResult = await this.pollForCompletion(jobId);
-        console.log(`[EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+          // Store the job ID
+          await supabase
+            .from('question_sets')
+            .update({ llamaparse_job_id: jobId })
+            .eq('id', questionSetId);
+
+          // Poll for completion
+          rawResult = await this.pollForCompletion(jobId);
+          console.log(`[EXTRACT] LlamaParse raw result size: ${Math.round(rawResult.length / 1024)}KB`);
+        }
+
+        console.log(`[EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
+
+        // Parse the result into MCQ format
+        questions = this.parseQuestionsFromContent(rawResult);
       }
 
-      console.log(`[EXTRACT] Raw result preview (first 500 chars): ${rawResult.substring(0, 500)}`);
-
-      // Parse the result into MCQ format
-      const questions = this.parseQuestionsFromContent(rawResult);
       const questionsJson = JSON.stringify(questions);
       console.log(`[EXTRACT] Parsed questions count: ${questions.questions?.length || 0}`);
       console.log(`[EXTRACT] Questions JSON size: ${Math.round(questionsJson.length / 1024)}KB`);
+
+      if (hasMarkers) {
+        const expectedCount = (combinedContent.match(new RegExp(Q_START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        const gotCount = questions.questions?.length || 0;
+        if (gotCount !== expectedCount) {
+          console.warn(`[EXTRACT] ⚠️ Marker count mismatch: input has ${expectedCount} ${Q_START_MARKER} markers but parser returned ${gotCount} questions`);
+        } else {
+          console.log(`[EXTRACT] ✓ Marker count matches: ${gotCount} questions for ${expectedCount} markers`);
+        }
+      }
 
       // Update question set with results
       const { data, error } = await supabase
@@ -778,6 +801,125 @@ IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not includ
     }
 
     return result;
+  },
+
+  /**
+   * Deterministically split pre-extracted content by <<<Q_START>>> / <<<Q_END>>>
+   * markers and parse each block's header + MCQ choices.
+   *
+   * Used in marker mode to bypass the LLM entirely — when boundaries are
+   * explicit, parsing is mechanical and the LLM has been observed to merge or
+   * skip blocks on multi-block input.
+   *
+   * Recognized header forms (first non-empty line of each block):
+   *   ":<n>)."  / ":<n>). <text>"    → label=<n>            (primary new format)
+   *   "<n>)."   / "<n>). <text>"     → label=<n>            (legacy parens form)
+   *   "<n>."    / "<n>. <text>"      → label=<n>            (legacy MCQ-style)
+   *   "Q<n>."   / "Q<n>. <text>"     → label=<n>
+   *   "\section*{<n>. ...}"          → label=<n>
+   *
+   * Choice lines (anywhere after the header) match: "(a)" / "(A)" / "(b)" /
+   * etc. through "(e)" / "(E)" — preserved in source order.
+   */
+  parseMarkerBlocks(combinedContent) {
+    const startToken = Q_START_MARKER;
+    const endToken = Q_END_MARKER;
+    const choiceLineRe = /^\s*\(([a-eA-E])\)\s*(.*)$/;
+    const questions = [];
+    let cursor = 0;
+
+    while (true) {
+      const startIdx = combinedContent.indexOf(startToken, cursor);
+      if (startIdx === -1) break;
+      const endIdx = combinedContent.indexOf(endToken, startIdx + startToken.length);
+      if (endIdx === -1) {
+        console.warn(`[EXTRACT] Unmatched ${startToken} at position ${startIdx} — stopping`);
+        break;
+      }
+
+      const blockContent = combinedContent.substring(startIdx + startToken.length, endIdx);
+      cursor = endIdx + endToken.length;
+
+      const lines = blockContent.split('\n');
+      let headerIdx = 0;
+      while (headerIdx < lines.length && lines[headerIdx].trim() === '') headerIdx++;
+
+      if (headerIdx >= lines.length) {
+        console.warn(`[EXTRACT] Empty block #${questions.length + 1} between markers — emitting placeholder`);
+        questions.push({
+          question_label: String(questions.length + 1),
+          text: '',
+          choices: [],
+        });
+        continue;
+      }
+
+      const headerLine = lines[headerIdx];
+      let questionLabel = '';
+      let headerRemainder = '';
+      let m;
+
+      if ((m = headerLine.match(/^\s*:\s*(\d+)\s*\)\s*\.\s*(.*)$/))) {
+        // Primary: ":<n>)." or ":<n>). <text>"
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else if ((m = headerLine.match(/^\s*\\section\*\{\s*(?:Q\.?\s*)?(\d+)\s*\.[^}]*\}\s*(.*)$/i))) {
+        // "\section*{<n>. ...}"
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else if ((m = headerLine.match(/^\s*(\d+)\s*\)\s*\.\s*(.*)$/))) {
+        // Legacy: "<n>)."
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else if ((m = headerLine.match(/^\s*(?:Q\.?\s*)?(\d+)\s*\.\s*(.*)$/i))) {
+        // Legacy MCQ-style: "<n>." or "Q<n>."
+        questionLabel = m[1];
+        headerRemainder = m[2].trim();
+      } else {
+        // Malformed — fall back to ordinal, keep header line in body
+        console.warn(`[EXTRACT] Block #${questions.length + 1} has malformed header: ${JSON.stringify(headerLine.slice(0, 80))} — using ordinal label`);
+        questionLabel = String(questions.length + 1);
+        headerRemainder = headerLine.trim();
+      }
+
+      // Walk remaining lines, separating stem text from MCQ choice lines.
+      // Once we hit the first choice line, every subsequent non-empty line is
+      // either another choice or a continuation of the previous choice's body.
+      const stemLines = [];
+      const choices = [];
+      if (headerRemainder) stemLines.push(headerRemainder);
+
+      let inChoices = false;
+      for (let i = headerIdx + 1; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        const cm = line.match(choiceLineRe);
+        if (cm) {
+          inChoices = true;
+          choices.push(`(${cm[1]}) ${cm[2].trim()}`);
+        } else if (inChoices) {
+          // Continuation of the last choice (rare wrap), or a blank between choices.
+          if (trimmed === '') continue;
+          if (choices.length > 0) {
+            choices[choices.length - 1] = `${choices[choices.length - 1]} ${trimmed}`.trim();
+          }
+        } else {
+          stemLines.push(line);
+        }
+      }
+
+      while (stemLines.length > 0 && stemLines[0].trim() === '') stemLines.shift();
+      while (stemLines.length > 0 && stemLines[stemLines.length - 1].trim() === '') stemLines.pop();
+
+      questions.push({
+        question_label: questionLabel,
+        text: stemLines.join('\n'),
+        choices,
+      });
+    }
+
+    console.log(`[EXTRACT] parseMarkerBlocks: extracted ${questions.length} blocks`);
+    return { questions };
   },
 
   /**
