@@ -13,6 +13,7 @@ import {
   Save,
   Pencil,
 } from 'lucide-react';
+import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState('job');
@@ -59,13 +60,13 @@ export default function HomePage() {
 
 // ============ ACTIVE JOB TAB ============
 function ActiveJobTab() {
-  const queryClient = useQueryClient();
+  const { bookId: savedBookId, chapterId: savedChapterId, itemType: savedItemType, setContext } = useActiveContext();
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
   const [selectedItemType, setSelectedItemType] = useState('question');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const { data: books } = useQuery({
+  const { data: books, isLoading } = useQuery({
     queryKey: ['books'],
     queryFn: () => api.get('/books'),
   });
@@ -76,37 +77,25 @@ function ActiveJobTab() {
     enabled: !!selectedBookId,
   });
 
-  const { data: activeJob, isLoading } = useQuery({
-    queryKey: ['activeJob'],
-    queryFn: () => api.get('/jobs/active'),
-  });
-
-  const setActiveJobMutation = useMutation({
-    mutationFn: (data) => api.post('/jobs/active', data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activeJob'] });
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    },
-  });
-
   useEffect(() => {
-    if (activeJob?.data) {
-      if (activeJob.data.active_book_id) setSelectedBookId(activeJob.data.active_book_id);
-      if (activeJob.data.active_chapter_id) setSelectedChapterId(activeJob.data.active_chapter_id);
-      if (activeJob.data.active_item_type) setSelectedItemType(activeJob.data.active_item_type);
-    }
-  }, [activeJob]);
+    if (savedBookId) setSelectedBookId(savedBookId);
+    if (savedChapterId) setSelectedChapterId(savedChapterId);
+    if (savedItemType) setSelectedItemType(savedItemType);
+  }, [savedBookId, savedChapterId, savedItemType]);
 
   const handleSave = () => {
     if (selectedBookId && selectedChapterId) {
-      setActiveJobMutation.mutate({
-        book_id: selectedBookId,
-        chapter_id: selectedChapterId,
-        item_type: selectedItemType,
-      });
+      setContext({ book: selectedBookId, chapter: selectedChapterId, type: selectedItemType });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     }
   };
+
+  // Look up display names for the currently saved context.
+  const savedBook = books?.data?.find((b) => b.id === savedBookId);
+  const savedBookLabel = savedBook?.display_name || savedBook?.name || 'N/A';
+  const savedChapter = chapters?.data?.find((c) => c.id === savedChapterId);
+  const savedChapterLabel = savedChapter?.display_name || savedChapter?.name || 'N/A';
 
   if (isLoading) return <div className="text-center py-8 text-gray-500">Loading...</div>;
 
@@ -117,16 +106,16 @@ function ActiveJobTab() {
         <p className="text-gray-500 text-sm mt-1">Set the book, chapter, and scan mode for incoming items</p>
       </div>
 
-      {activeJob?.data?.active_book_id && (
+      {savedBookId && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center text-green-700 mb-2">
             <CheckCircle className="w-5 h-5 mr-2" />
             <span className="font-medium">Current Active Job</span>
           </div>
           <p className="text-green-800 text-sm">
-            <span className="font-medium">Book:</span> {activeJob.data.active_book?.display_name || 'N/A'} |{' '}
-            <span className="font-medium">Chapter:</span> {activeJob.data.active_chapter?.display_name || 'N/A'} |{' '}
-            <span className="font-medium">Mode:</span> {activeJob.data.active_item_type || 'question'}
+            <span className="font-medium">Book:</span> {savedBookLabel} |{' '}
+            <span className="font-medium">Chapter:</span> {savedChapterLabel} |{' '}
+            <span className="font-medium">Mode:</span> {savedItemType}
           </p>
         </div>
       )}
@@ -189,11 +178,11 @@ function ActiveJobTab() {
       <div className="flex items-center gap-4">
         <button
           onClick={handleSave}
-          disabled={!selectedBookId || !selectedChapterId || setActiveJobMutation.isPending}
+          disabled={!selectedBookId || !selectedChapterId}
           className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Save className="w-5 h-5 mr-2" />
-          {setActiveJobMutation.isPending ? 'Saving...' : 'Save Configuration'}
+          Save Configuration
         </button>
         {saveSuccess && <span className="text-green-600 flex items-center"><CheckCircle className="w-4 h-4 mr-1" /> Saved!</span>}
       </div>

@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { CheckCircle, Trash2, Eye, Filter, Upload } from 'lucide-react';
 import SolutionSetModal from '../components/SolutionSetModal';
 import ImportSolutionsModal from '../components/ImportSolutionsModal';
+import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function ExtractedSolutionsPage() {
   const queryClient = useQueryClient();
   const [selectedSet, setSelectedSet] = useState(null);
-  const [selectedBookId, setSelectedBookId] = useState('');
-  const [selectedChapterId, setSelectedChapterId] = useState('');
+  const { bookId: selectedBookId, chapterId: selectedChapterId, setContext } = useActiveContext();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Fetch books for dropdown
@@ -24,22 +24,6 @@ export default function ExtractedSolutionsPage() {
     queryFn: () => api.get(`/chapters/book/${selectedBookId}`),
     enabled: !!selectedBookId,
   });
-
-  // Fetch active job
-  const { data: activeJob } = useQuery({
-    queryKey: ['activeJob'],
-    queryFn: () => api.get('/jobs/active'),
-  });
-
-  // Set default filters from active job
-  useEffect(() => {
-    if (activeJob?.data?.active_book_id && !selectedBookId) {
-      setSelectedBookId(activeJob.data.active_book_id);
-    }
-    if (activeJob?.data?.active_chapter_id && !selectedChapterId) {
-      setSelectedChapterId(activeJob.data.active_chapter_id);
-    }
-  }, [activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id]);
 
   // Fetch solution sets with filters
   const { data: solutionSets, isLoading } = useQuery({
@@ -120,10 +104,7 @@ export default function ExtractedSolutionsPage() {
           <Filter className="w-5 h-5 text-gray-400" />
           <select
             value={selectedBookId}
-            onChange={(e) => {
-              setSelectedBookId(e.target.value);
-              setSelectedChapterId('');
-            }}
+            onChange={(e) => setContext({ book: e.target.value, chapter: '' })}
             className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
             <option value="">All Books</option>
@@ -136,7 +117,7 @@ export default function ExtractedSolutionsPage() {
 
           <select
             value={selectedChapterId}
-            onChange={(e) => setSelectedChapterId(e.target.value)}
+            onChange={(e) => setContext({ chapter: e.target.value })}
             disabled={!selectedBookId}
             className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
           >

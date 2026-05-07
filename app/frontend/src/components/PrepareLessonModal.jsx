@@ -5,6 +5,7 @@ import { BookOpen, X, Filter, FileQuestion, CheckCircle, Eye, Loader2, Code, Edi
 import QuestionSetModal from './QuestionSetModal';
 import SolutionSetModal from './SolutionSetModal';
 import QuestionText from './QuestionText';
+import { useActiveContext } from '../hooks/useActiveContext';
 
 // Memoized component for a single item in view mode
 const ItemViewMode = memo(function ItemViewMode({ item, index, onEdit }) {
@@ -356,22 +357,20 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     enabled: isOpen && !!selectedBookId,
   });
 
-  // Fetch active job for default selections
-  const { data: activeJob } = useQuery({
-    queryKey: ['activeJob'],
-    queryFn: () => api.get('/jobs/active'),
-    enabled: isOpen,
-  });
+  // Active context (URL ?book=&chapter= with localStorage hydration).
+  // The modal does NOT write back to context — its local selections are
+  // ephemeral to the prepare-lesson workflow.
+  const { bookId: ctxBookId, chapterId: ctxChapterId } = useActiveContext();
 
-  // Set default filters from active job
+  // Set default filters from active context when the modal opens.
   useEffect(() => {
-    if (isOpen && activeJob?.data?.active_book_id && !selectedBookId) {
-      setSelectedBookId(activeJob.data.active_book_id);
+    if (isOpen && ctxBookId && !selectedBookId) {
+      setSelectedBookId(ctxBookId);
     }
-    if (isOpen && activeJob?.data?.active_chapter_id && !selectedChapterId) {
-      setSelectedChapterId(activeJob.data.active_chapter_id);
+    if (isOpen && ctxChapterId && !selectedChapterId) {
+      setSelectedChapterId(ctxChapterId);
     }
-  }, [isOpen, activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id]);
+  }, [isOpen, ctxBookId, ctxChapterId]);
 
   // Reset selections when modal opens
   useEffect(() => {

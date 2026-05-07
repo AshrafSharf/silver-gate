@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link, Download, Sparkles } from 'lucide-react';
 import PDFViewerModal from '../components/PDFViewerModal';
+import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function ScannedItemsPage() {
   const queryClient = useQueryClient();
+
+  // Active context (URL ?book=&chapter=&type= with localStorage hydration)
+  const { bookId: selectedBookId, chapterId: selectedChapterId, itemType: activeTab, setContext } = useActiveContext();
 
   // Modal state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -14,13 +18,6 @@ export default function ScannedItemsPage() {
   const [uploadMode, setUploadMode] = useState('url'); // 'url' or 'file'
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
-
-  // Tab state for item type
-  const [activeTab, setActiveTab] = useState('question');
-
-  // Filter state
-  const [selectedBookId, setSelectedBookId] = useState('');
-  const [selectedChapterId, setSelectedChapterId] = useState('');
 
   // Multi-select state
   const [selectedItems, setSelectedItems] = useState([]); // Array of {id, order}
@@ -95,25 +92,6 @@ export default function ScannedItemsPage() {
       return api.get(`/scanned-items?${queryString}`);
     },
   });
-
-  // Fetch active job
-  const { data: activeJob } = useQuery({
-    queryKey: ['activeJob'],
-    queryFn: () => api.get('/jobs/active'),
-  });
-
-  // Set default filters from active job
-  useEffect(() => {
-    if (activeJob?.data?.active_book_id && !selectedBookId) {
-      setSelectedBookId(activeJob.data.active_book_id);
-    }
-    if (activeJob?.data?.active_chapter_id && !selectedChapterId) {
-      setSelectedChapterId(activeJob.data.active_chapter_id);
-    }
-    if (activeJob?.data?.active_item_type) {
-      setActiveTab(activeJob.data.active_item_type);
-    }
-  }, [activeJob?.data?.active_book_id, activeJob?.data?.active_chapter_id, activeJob?.data?.active_item_type]);
 
   // Add scanned item mutation (URL mode)
   const addItemMutation = useMutation({
@@ -471,7 +449,13 @@ export default function ScannedItemsPage() {
     setPreExtractedDraft('');
   };
 
-  const hasActiveJob = activeJob?.data?.active_book_id && activeJob?.data?.active_chapter_id;
+  const hasActiveJob = !!(selectedBookId && selectedChapterId);
+
+  // Resolve display names for the active context from the books/chapters lists.
+  const activeBook = books?.data?.find((b) => b.id === selectedBookId);
+  const activeChapter = chapters?.data?.find((c) => c.id === selectedChapterId);
+  const activeBookLabel = activeBook?.display_name || activeBook?.name || 'Not set';
+  const activeChapterLabel = activeChapter?.display_name || activeChapter?.name || 'Not set';
 
   // Sort items by created_at (newest first)
   const sortedItems = scannedItems?.data
@@ -517,7 +501,7 @@ export default function ScannedItemsPage() {
           <nav className="-mb-px flex space-x-8" aria-label="Tabs">
             <button
               onClick={() => {
-                setActiveTab('question');
+                setContext({ type: 'question' });
                 clearSelections();
               }}
               className={`flex items-center py-4 px-1 border-b-2 font-medium text-sm ${
@@ -531,7 +515,7 @@ export default function ScannedItemsPage() {
             </button>
             <button
               onClick={() => {
-                setActiveTab('solution');
+                setContext({ type: 'solution' });
                 clearSelections();
               }}
               className={`flex items-center py-4 px-1 border-b-2 font-medium text-sm ${
@@ -562,8 +546,7 @@ export default function ScannedItemsPage() {
             <select
               value={selectedBookId}
               onChange={(e) => {
-                setSelectedBookId(e.target.value);
-                setSelectedChapterId('');
+                setContext({ book: e.target.value, chapter: '' });
                 clearSelections();
               }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -585,7 +568,7 @@ export default function ScannedItemsPage() {
             <select
               value={selectedChapterId}
               onChange={(e) => {
-                setSelectedChapterId(e.target.value);
+                setContext({ chapter: e.target.value });
                 clearSelections();
               }}
               disabled={!selectedBookId}
@@ -1006,21 +989,19 @@ export default function ScannedItemsPage() {
 
               <div className="bg-gray-50 p-3 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium">Active Book:</span>{' '}
-                  {activeJob?.data?.active_book?.display_name || 'Not set'}
+                  <span className="font-medium">Active Book:</span> {activeBookLabel}
                 </p>
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium">Active Chapter:</span>{' '}
-                  {activeJob?.data?.active_chapter?.display_name || 'Not set'}
+                  <span className="font-medium">Active Chapter:</span> {activeChapterLabel}
                 </p>
                 <p className="text-sm text-gray-600">
                   <span className="font-medium">Item Type:</span>{' '}
                   <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                    activeJob?.data?.active_item_type === 'solution'
+                    activeTab === 'solution'
                       ? 'bg-purple-100 text-purple-800'
                       : 'bg-blue-100 text-blue-800'
                   }`}>
-                    {activeJob?.data?.active_item_type === 'solution' ? 'Solution' : 'Question'}
+                    {activeTab === 'solution' ? 'Solution' : 'Question'}
                   </span>
                 </p>
               </div>

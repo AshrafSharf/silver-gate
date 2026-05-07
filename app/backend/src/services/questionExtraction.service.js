@@ -824,7 +824,59 @@ IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not includ
   parseMarkerBlocks(combinedContent) {
     const startToken = Q_START_MARKER;
     const endToken = Q_END_MARKER;
-    const choiceLineRe = /^\s*\(([a-eA-E])\)\s*(.*)$/;
+
+    // Split a single line into a leading stem fragment + zero or more MCQ
+    // choices.
+    //
+    // At LINE START we accept both shapes (with optional bullet "-"/"*"/"•"):
+    //     "a) text"   →   bare letter + closing paren
+    //     "(a) text"  →   parens-wrapped
+    // INLINE (anywhere else on the line) we only accept the parens-wrapped
+    // form "(a)" (whitespace-bounded), to avoid false positives in prose like
+    // "the value at point a) on the graph". The single-letter constraint
+    // (a–e / A–E) plus the whitespace bounding also keeps us safe inside
+    // LaTeX expressions like \left(2x\right) and \frac{a}{b}.
+    //
+    // Layouts handled:
+    //   "a) 5 cm"                              one choice (bare, line-start)
+    //   "(a) 5 cm"                             one choice (parens, line-start)
+    //   "(a) 5 (b) 10 (c) 15 (d) 20"           several inline (parens)
+    //   "Find x. (a) 1 (b) 2 ..."              stem + inline choices
+    //   "Stem text"                             pure stem
+    const lineStartChoiceRe = /^\s*[-*•]?\s*\(?([a-eA-E])\)\s+(.*)$/;
+    const inlineParenChoiceRe = /(?:^|(?<=\s))\(([a-eA-E])\)(?=\s|$)/g;
+
+    const splitChoicesFromLine = (line) => {
+      // Step 1: line-start choice marker (bare or parens). The rest of the
+      // line is treated as ONE choice body. We don't try to further split
+      // the body for additional inline markers — extremely rare, and the
+      // user's format keeps each choice on its own line.
+      const startMatch = line.match(lineStartChoiceRe);
+      if (startMatch) {
+        return {
+          leadingStem: '',
+          choices: [{ letter: startMatch[1], body: startMatch[2].trim() }],
+        };
+      }
+      // Step 2: scan for inline parens-wrapped markers.
+      const markers = [];
+      let m;
+      while ((m = inlineParenChoiceRe.exec(line)) !== null) {
+        markers.push({ letter: m[1], start: m.index, end: m.index + 3 });
+      }
+      // Reset lastIndex so subsequent calls aren't affected by global state.
+      inlineParenChoiceRe.lastIndex = 0;
+      if (markers.length === 0) return { leadingStem: line, choices: [] };
+      const leadingStem = line.substring(0, markers[0].start).trim();
+      const choices = markers.map((mk, i) => ({
+        letter: mk.letter,
+        body: line
+          .substring(mk.end, i + 1 < markers.length ? markers[i + 1].start : line.length)
+          .trim(),
+      }));
+      return { leadingStem, choices };
+    };
+
     const questions = [];
     let cursor = 0;
 
@@ -882,24 +934,45 @@ IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not includ
         headerRemainder = headerLine.trim();
       }
 
-      // Walk remaining lines, separating stem text from MCQ choice lines.
-      // Once we hit the first choice line, every subsequent non-empty line is
-      // either another choice or a continuation of the previous choice's body.
+      // Walk remaining lines, separating stem text from MCQ choices.
       const stemLines = [];
       const choices = [];
-      if (headerRemainder) stemLines.push(headerRemainder);
-
       let inChoices = false;
+
+      // Process the header remainder first (text on the same line as ":1)." —
+      // may itself be stem and/or contain inline choices).
+      if (headerRemainder) {
+        const { leadingStem, choices: lineChoices } = splitChoicesFromLine(headerRemainder);
+        if (lineChoices.length > 0) {
+          if (leadingStem) stemLines.push(leadingStem);
+          inChoices = true;
+          for (const c of lineChoices) choices.push(`(${c.letter}) ${c.body}`);
+        } else {
+          stemLines.push(headerRemainder);
+        }
+      }
+
       for (let i = headerIdx + 1; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-        const cm = line.match(choiceLineRe);
-        if (cm) {
+        if (trimmed === '') continue;
+        const { leadingStem, choices: lineChoices } = splitChoicesFromLine(line);
+
+        if (lineChoices.length > 0) {
+          // Any leading text either continues the previous choice (math wrap)
+          // or, if we're still in stem territory, becomes part of the stem.
+          if (leadingStem) {
+            if (inChoices && choices.length > 0) {
+              choices[choices.length - 1] = `${choices[choices.length - 1]} ${leadingStem}`.trim();
+            } else {
+              stemLines.push(leadingStem);
+            }
+          }
           inChoices = true;
-          choices.push(`(${cm[1]}) ${cm[2].trim()}`);
+          for (const c of lineChoices) choices.push(`(${c.letter}) ${c.body}`);
         } else if (inChoices) {
-          // Continuation of the last choice (rare wrap), or a blank between choices.
-          if (trimmed === '') continue;
+          // No marker on this line — treat as a continuation of the last
+          // choice (multi-line math, wrapped answer, etc.).
           if (choices.length > 0) {
             choices[choices.length - 1] = `${choices[choices.length - 1]} ${trimmed}`.trim();
           }

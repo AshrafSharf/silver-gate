@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Book, FileText, Save, CheckCircle, HelpCircle, FileQuestion } from 'lucide-react';
+import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function JobConfigPage() {
-  const queryClient = useQueryClient();
+  const { bookId: savedBookId, chapterId: savedChapterId, itemType: savedItemType, setContext } = useActiveContext();
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedChapterId, setSelectedChapterId] = useState('');
   const [selectedItemType, setSelectedItemType] = useState('question');
@@ -23,56 +24,36 @@ export default function JobConfigPage() {
     enabled: !!selectedBookId,
   });
 
-  // Fetch active job
-  const { data: activeJob, isLoading: jobLoading } = useQuery({
-    queryKey: ['activeJob'],
-    queryFn: () => api.get('/jobs/active'),
-  });
-
-  // Set active job mutation
-  const setActiveJobMutation = useMutation({
-    mutationFn: (data) => api.post('/jobs/active', data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activeJob'] });
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    },
-  });
-
-  // Initialize form with active job data
+  // Initialize form with saved context (URL + localStorage)
   useEffect(() => {
-    if (activeJob?.data) {
-      if (activeJob.data.active_book_id) {
-        setSelectedBookId(activeJob.data.active_book_id);
-      }
-      if (activeJob.data.active_chapter_id) {
-        setSelectedChapterId(activeJob.data.active_chapter_id);
-      }
-      if (activeJob.data.active_item_type) {
-        setSelectedItemType(activeJob.data.active_item_type);
-      }
-    }
-  }, [activeJob]);
+    if (savedBookId) setSelectedBookId(savedBookId);
+    if (savedChapterId) setSelectedChapterId(savedChapterId);
+    if (savedItemType) setSelectedItemType(savedItemType);
+  }, [savedBookId, savedChapterId, savedItemType]);
 
-  // Reset chapter when book changes
+  // Reset chapter when book changes (compared against the saved book)
   useEffect(() => {
-    if (selectedBookId && activeJob?.data?.active_book_id !== selectedBookId) {
+    if (selectedBookId && savedBookId !== selectedBookId) {
       setSelectedChapterId('');
     }
-  }, [selectedBookId, activeJob]);
+  }, [selectedBookId, savedBookId]);
 
   const handleSave = () => {
     if (selectedBookId && selectedChapterId) {
-      setActiveJobMutation.mutate({
-        book_id: selectedBookId,
-        chapter_id: selectedChapterId,
-        item_type: selectedItemType,
-      });
+      setContext({ book: selectedBookId, chapter: selectedChapterId, type: selectedItemType });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
     }
   };
 
-  const isLoading = booksLoading || jobLoading;
-  const canSave = selectedBookId && selectedChapterId && !setActiveJobMutation.isPending;
+  const isLoading = booksLoading;
+  const canSave = selectedBookId && selectedChapterId;
+
+  // Look up display names for the currently saved context.
+  const savedBook = books?.data?.find((b) => b.id === savedBookId);
+  const savedBookLabel = savedBook?.display_name || savedBook?.name || 'Not set';
+  const savedChapter = chapters?.data?.find((c) => c.id === savedChapterId);
+  const savedChapterLabel = savedChapter?.display_name || savedChapter?.name || 'Not set';
 
   return (
     <div className="max-w-2xl">
@@ -89,29 +70,27 @@ export default function JobConfigPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Current Active Job */}
-          {activeJob?.data && (
+          {/* Current Active Context */}
+          {savedBookId && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
               <div className="flex items-center text-green-700 mb-2">
                 <CheckCircle className="w-5 h-5 mr-2" />
                 <span className="font-medium">Current Active Job</span>
               </div>
               <p className="text-green-800">
-                <span className="font-medium">Book:</span>{' '}
-                {activeJob.data.active_book?.display_name || activeJob.data.active_book?.name || 'Not set'}
+                <span className="font-medium">Book:</span> {savedBookLabel}
               </p>
               <p className="text-green-800">
-                <span className="font-medium">Chapter:</span>{' '}
-                {activeJob.data.active_chapter?.display_name || activeJob.data.active_chapter?.name || 'Not set'}
+                <span className="font-medium">Chapter:</span> {savedChapterLabel}
               </p>
               <p className="text-green-800">
                 <span className="font-medium">Scan Mode:</span>{' '}
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ${
-                  activeJob.data.active_item_type === 'question'
+                  savedItemType === 'question'
                     ? 'bg-blue-100 text-blue-800'
                     : 'bg-purple-100 text-purple-800'
                 }`}>
-                  {activeJob.data.active_item_type === 'question' ? 'Questions' : 'Solutions'}
+                  {savedItemType === 'question' ? 'Questions' : 'Solutions'}
                 </span>
               </p>
             </div>
@@ -240,19 +219,13 @@ export default function JobConfigPage() {
               }`}
             >
               <Save className="w-5 h-5 mr-2" />
-              {setActiveJobMutation.isPending ? 'Saving...' : 'Save Configuration'}
+              Save Configuration
             </button>
 
             {saveSuccess && (
               <span className="flex items-center text-green-600">
                 <CheckCircle className="w-5 h-5 mr-2" />
                 Configuration saved successfully!
-              </span>
-            )}
-
-            {setActiveJobMutation.isError && (
-              <span className="text-red-600">
-                Error: {setActiveJobMutation.error.message}
               </span>
             )}
           </div>
