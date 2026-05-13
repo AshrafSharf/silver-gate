@@ -9,6 +9,26 @@ export const Q_END_MARKER = '<<<Q_END>>>';
 export const S_START_MARKER = '<<<S_START>>>';
 export const S_END_MARKER = '<<<S_END>>>';
 
+// LlamaParse occasionally emits boundary markers with 2 angle brackets instead
+// of 3 (e.g. `<<S_END>>>` instead of `<<<S_END>>>`), which makes downstream
+// strict `includes()` / `indexOf()` checks fail and silently skip the marker-aware
+// extraction path. Normalize any 2–3 angle variant to the canonical 3-angle form.
+const MARKER_NORMALIZATIONS = [
+  { pattern: /<{2,3}Q_START>{2,3}/g, replacement: Q_START_MARKER },
+  { pattern: /<{2,3}Q_END>{2,3}/g, replacement: Q_END_MARKER },
+  { pattern: /<{2,3}S_START>{2,3}/g, replacement: S_START_MARKER },
+  { pattern: /<{2,3}S_END>{2,3}/g, replacement: S_END_MARKER },
+];
+
+export function normalizeMarkers(content) {
+  if (typeof content !== 'string' || !content) return content;
+  let out = content;
+  for (const { pattern, replacement } of MARKER_NORMALIZATIONS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 const PRE_EXTRACTION_INSTRUCTIONS = `You are a question-boundary annotator. Your job is to take the LaTeX/Markdown content below (produced by an OCR pipeline from a question paper or academic book) and return the SAME content with explicit boundary markers wrapped around each question.
 
 OUTPUT FORMAT — STRICT:
@@ -192,8 +212,12 @@ export const preExtractionService = {
     const jobId = await this.submitToLlamaParse(item.latex_doc, cfg.instructions);
     console.log(`[PRE-EXTRACT] LlamaParse job: ${jobId}`);
 
-    const annotated = await this.pollForCompletion(jobId);
+    const rawAnnotated = await this.pollForCompletion(jobId);
+    const annotated = normalizeMarkers(rawAnnotated);
     console.log(`[PRE-EXTRACT] Annotated size: ${Math.round(annotated.length / 1024)}KB`);
+    if (annotated !== rawAnnotated) {
+      console.log(`[PRE-EXTRACT] Normalized stray boundary marker variants to canonical form`);
+    }
 
     const startCount = (annotated.match(new RegExp(cfg.startMarker, 'g')) || []).length;
     const endCount = (annotated.match(new RegExp(cfg.endMarker, 'g')) || []).length;
@@ -222,7 +246,7 @@ export const preExtractionService = {
     if (typeof preExtracted !== 'string') {
       throw new Error('pre_extracted must be a string');
     }
-    const value = preExtracted.length > 0 ? preExtracted : null;
+    const value = preExtracted.length > 0 ? normalizeMarkers(preExtracted) : null;
 
     const { data, error } = await supabase
       .from('scanned_items')

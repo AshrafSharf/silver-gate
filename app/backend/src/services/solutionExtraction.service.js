@@ -1,6 +1,6 @@
 import { supabase } from '../config/database.js';
 import { config } from '../config/index.js';
-import { S_START_MARKER, S_END_MARKER } from './preExtraction.service.js';
+import { S_START_MARKER, S_END_MARKER, normalizeMarkers } from './preExtraction.service.js';
 
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
@@ -654,7 +654,11 @@ export const solutionExtractionService = {
     const combinedParts = itemIds.map((id, index) => {
       const row = itemMap.get(id);
       const usingPre = !!(row && row.pre_extracted);
-      const content = (usingPre ? row.pre_extracted : row?.latex_doc) || '';
+      const rawContent = (usingPre ? row.pre_extracted : row?.latex_doc) || '';
+      const content = normalizeMarkers(rawContent);
+      if (content !== rawContent) {
+        console.log(`[SOLUTION_EXTRACT] Item ${index + 1} (${id}): normalized stray boundary marker variants to canonical form`);
+      }
       console.log(`[SOLUTION_EXTRACT] Item ${index + 1} (${id}): ${content ? Math.round(content.length / 1024) + 'KB' : 'EMPTY/NULL'} (source: ${usingPre ? 'pre_extracted' : 'latex_doc'})`);
       return `% ========== Document ${index + 1} ==========\n\n${content}`;
     });
