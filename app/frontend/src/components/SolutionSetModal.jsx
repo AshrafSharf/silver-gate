@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { X, CheckCircle, Code, Eye, Edit2, Save, Loader2, AlertCircle } from 'lucide-react';
 import QuestionText from './QuestionText';
+import ErrorBoundary from './ErrorBoundary';
 
 export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
   const queryClient = useQueryClient();
@@ -226,6 +227,9 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
                     <span className="flex-shrink-0 w-10 h-10 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center text-sm font-bold">
                       {solution.question_label || index + 1}
                     </span>
+                    <ErrorBoundary
+                      message={`Failed to render solution ${solution.question_label || index + 1}. View the raw JSON to inspect it.`}
+                    >
                     <div className="flex-1 min-w-0">
                       {solution.answer_key && (
                         <div className="mb-3 flex items-center gap-2">
@@ -252,6 +256,7 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
                         </div>
                       )}
                     </div>
+                    </ErrorBoundary>
                   </div>
                 </div>
               ))}
