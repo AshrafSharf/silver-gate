@@ -42,6 +42,12 @@ export const config = {
     apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
     model: 'gemini-2.0-flash',
   },
+  deepseek: {
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    // OpenAI-compatible API. Chat completions live at `${apiUrl}/chat/completions`.
+    apiUrl: process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com',
+    model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+  },
 };
 
 export default config;

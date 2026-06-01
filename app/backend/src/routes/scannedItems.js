@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { scannedItemService, preExtractionService } from '../services/index.js';
+import { scannedItemService, preExtractionService, chapterSectionExtractionService } from '../services/index.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
 
 const router = Router();
@@ -20,6 +20,28 @@ const upload = multer({
     }
   },
 });
+
+// List portal MongoDB book_groups for the Generate Section modal dropdown.
+// Must come before `GET /:id` so the literal path is matched first.
+router.get('/book-groups', asyncHandler(async (req, res) => {
+  const groups = await chapterSectionExtractionService.listBookGroups();
+  res.json({ success: true, data: groups });
+}));
+
+// List portal MongoDB books for the Generate Section modal dropdown. The user
+// selects one of these and it is used directly (no book is ever created).
+// Must come before `GET /:id` so the literal path is matched first.
+router.get('/portal-books', asyncHandler(async (req, res) => {
+  const books = await chapterSectionExtractionService.listBooks();
+  res.json({ success: true, data: books });
+}));
+
+// List portal MongoDB chapters for a selected book (Generate Section modal).
+// The user selects one and exercises are inserted into it directly.
+router.get('/portal-books/:bookId/chapters', asyncHandler(async (req, res) => {
+  const chapters = await chapterSectionExtractionService.listChapters(req.params.bookId);
+  res.json({ success: true, data: chapters });
+}));
 
 // Get all scanned items (with optional filters)
 router.get('/', asyncHandler(async (req, res) => {
@@ -228,6 +250,12 @@ router.put('/:id/pre-extracted', asyncHandler(async (req, res) => {
   }
   const item = await preExtractionService.savePreExtracted(req.params.id, pre_extracted);
   res.json({ success: true, data: item });
+}));
+
+// Generate section/exercise rows in portal MongoDB from this scanned item's LaTeX.
+router.post('/:id/generate-section', asyncHandler(async (req, res) => {
+  const result = await chapterSectionExtractionService.generateSections(req.params.id, req.body || {});
+  res.json({ success: true, data: result });
 }));
 
 // Delete scanned item

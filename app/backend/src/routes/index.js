@@ -8,6 +8,7 @@ import questionSetsRoutes from './questionSets.js';
 import solutionSetsRoutes from './solutionSets.js';
 import driveRoutes from './drive.js';
 import lessonsRoutes from './lessons.js';
+import solutionRefineRoutes from './solutionRefine.js';
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use('/question-sets', questionSetsRoutes);
 router.use('/solution-sets', solutionSetsRoutes);
 router.use('/drive', driveRoutes);
 router.use('/lessons', lessonsRoutes);
+router.use('/solution-refine', solutionRefineRoutes);
 
 export default router;

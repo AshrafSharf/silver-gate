@@ -11,3 +11,5 @@ export { emailInboundService } from './emailInbound.service.js';
 export { googleDriveService } from './googleDrive.service.js';
 export { lessonsService } from './lessons.service.js';
 export { reverseSyncService } from './reverse-sync/index.js';
+export { chapterSectionExtractionService } from './chapterSectionExtraction.service.js';
+export { solutionRefinerService } from './solutionRefiner.service.js';

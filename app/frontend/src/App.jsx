@@ -7,6 +7,7 @@ import HomePage from './pages/HomePage';
 import ScannedItemsPage from './pages/ScannedItemsPage';
 import ExtractedQuestionsPage from './pages/ExtractedQuestionsPage';
 import ExtractedSolutionsPage from './pages/ExtractedSolutionsPage';
+import SolutionGeneratePage from './pages/SolutionGeneratePage';
 import LessonFoldersPage from './pages/LessonFoldersPage';
 import LessonsPage from './pages/LessonsPage';
 
@@ -44,6 +45,7 @@ function App() {
                     <Route path="/scanned-items" element={<ScannedItemsPage />} />
                     <Route path="/extracted-questions" element={<ExtractedQuestionsPage />} />
                     <Route path="/extracted-solutions" element={<ExtractedSolutionsPage />} />
+                    <Route path="/solution-generate" element={<SolutionGeneratePage />} />
                     <Route path="/lesson-folders" element={<LessonFoldersPage />} />
                     <Route path="/lessons" element={<LessonsPage />} />
                   </Routes>

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link, Download, Sparkles } from 'lucide-react';
+import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link, Download, Sparkles, Layers } from 'lucide-react';
 import PDFViewerModal from '../components/PDFViewerModal';
+import GenerateSectionModal from '../components/GenerateSectionModal';
 import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function ScannedItemsPage() {
@@ -26,6 +27,9 @@ export default function ScannedItemsPage() {
   // PDF viewer modal state
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const [selectedPdfItem, setSelectedPdfItem] = useState(null);
+
+  // Generate Section modal state
+  const [generateSectionItem, setGenerateSectionItem] = useState(null);
 
   // LaTeX viewer modal state
   const [latexViewerOpen, setLatexViewerOpen] = useState(false);
@@ -840,6 +844,18 @@ export default function ScannedItemsPage() {
                           <Sparkles className="w-5 h-5" />
                         </button>
                         <button
+                          onClick={() => setGenerateSectionItem(item)}
+                          disabled={item.latex_conversion_status !== 'completed'}
+                          className={`${item.latex_conversion_status !== 'completed' ? 'text-gray-300 cursor-not-allowed' : 'text-purple-500 hover:text-purple-700'}`}
+                          title={
+                            item.latex_conversion_status !== 'completed'
+                              ? 'LaTeX conversion not completed'
+                              : 'Generate Section: extract sections/exercises into MongoDB'
+                          }
+                        >
+                          <Layers className="w-5 h-5" />
+                        </button>
+                        <button
                           onClick={() => handleEditItem(item)}
                           className="text-gray-600 hover:text-gray-800"
                           title="Edit item"
@@ -1378,6 +1394,13 @@ export default function ScannedItemsPage() {
         }}
         pdfUrl={selectedPdfItem ? getPdfUrl(selectedPdfItem) : null}
         title={selectedPdfItem?.item_data || 'PDF Document'}
+      />
+
+      {/* Generate Section Modal */}
+      <GenerateSectionModal
+        open={!!generateSectionItem}
+        item={generateSectionItem}
+        onClose={() => setGenerateSectionItem(null)}
       />
 
       {/* LaTeX Viewer Modal */}
