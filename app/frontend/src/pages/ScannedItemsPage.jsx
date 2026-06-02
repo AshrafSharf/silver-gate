@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { ScanLine, Plus, Trash2, X, CheckSquare, FileQuestion, Filter, HelpCircle, CheckCircle, Eye, FileText, Pencil, Upload, Link, Download, Sparkles, Layers } from 'lucide-react';
 import PDFViewerModal from '../components/PDFViewerModal';
 import GenerateSectionModal from '../components/GenerateSectionModal';
+import GenerateSectionManualModal from '../components/GenerateSectionManualModal';
 import { useActiveContext } from '../hooks/useActiveContext';
 
 export default function ScannedItemsPage() {
@@ -30,6 +31,9 @@ export default function ScannedItemsPage() {
 
   // Generate Section modal state
   const [generateSectionItem, setGenerateSectionItem] = useState(null);
+
+  // Standalone "Generate Section" modal (manual LaTeX paste)
+  const [showManualGenerate, setShowManualGenerate] = useState(false);
 
   // LaTeX viewer modal state
   const [latexViewerOpen, setLatexViewerOpen] = useState(false);
@@ -494,19 +498,29 @@ export default function ScannedItemsPage() {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          disabled={!hasActiveJob}
-          className={`flex items-center px-4 py-2 rounded-lg font-medium ${
-            hasActiveJob
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-          }`}
-          title={!hasActiveJob ? 'Please configure an active job first' : ''}
-        >
-          <Plus className="w-5 h-5 mr-2" />
-          Add Item
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowManualGenerate(true)}
+            className="flex items-center px-4 py-2 rounded-lg font-medium bg-purple-600 text-white hover:bg-purple-700"
+            title="Paste LaTeX content and generate sections into a portal chapter"
+          >
+            <Layers className="w-5 h-5 mr-2" />
+            Generate Section
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            disabled={!hasActiveJob}
+            className={`flex items-center px-4 py-2 rounded-lg font-medium ${
+              hasActiveJob
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+            }`}
+            title={!hasActiveJob ? 'Please configure an active job first' : ''}
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Add Item
+          </button>
+        </div>
       </div>
 
       {/* Item Type Tabs */}
@@ -1396,11 +1410,17 @@ export default function ScannedItemsPage() {
         title={selectedPdfItem?.item_data || 'PDF Document'}
       />
 
-      {/* Generate Section Modal */}
+      {/* Generate Section Modal (from a scanned item) */}
       <GenerateSectionModal
         open={!!generateSectionItem}
         item={generateSectionItem}
         onClose={() => setGenerateSectionItem(null)}
+      />
+
+      {/* Generate Section Modal (manual LaTeX paste) */}
+      <GenerateSectionManualModal
+        open={showManualGenerate}
+        onClose={() => setShowManualGenerate(false)}
       />
 
       {/* LaTeX Viewer Modal */}

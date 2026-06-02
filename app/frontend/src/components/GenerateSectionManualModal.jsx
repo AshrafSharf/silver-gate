@@ -3,19 +3,24 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, Loader2, CheckCircle2, AlertCircle, Plus } from 'lucide-react';
 import { api } from '../lib/api';
 
-export default function GenerateSectionModal({ open, item, onClose }) {
+// Standalone "Generate Section" — paste LaTeX content, pick a portal book +
+// chapter, and generate the exercises into that chapter. No scanned item needed.
+export default function GenerateSectionManualModal({ open, onClose }) {
   const queryClient = useQueryClient();
 
+  const [latex, setLatex] = useState('');
+  const [exerciseType, setExerciseType] = useState('EXAMPLE'); // 'EXAMPLE' | 'EXERCISE'
   const [boardFilter, setBoardFilter] = useState('');
   const [gradeFilter, setGradeFilter] = useState('');
-  const [bookChoice, setBookChoice] = useState(''); // '' | <portal book id>
-  const [chapterChoice, setChapterChoice] = useState(''); // '' | <portal chapter id>
+  const [bookChoice, setBookChoice] = useState('');
+  const [chapterChoice, setChapterChoice] = useState('');
   const [result, setResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // Reset state every time the modal opens for a new item.
   useEffect(() => {
     if (open) {
+      setLatex('');
+      setExerciseType('EXAMPLE');
       setBoardFilter('');
       setGradeFilter('');
       setBookChoice('');
@@ -23,20 +28,16 @@ export default function GenerateSectionModal({ open, item, onClose }) {
       setResult(null);
       setErrorMsg(null);
     }
-  }, [open, item?.id]);
+  }, [open]);
 
   const { data: books, isLoading: booksLoading } = useQuery({
     queryKey: ['portalBooks'],
     queryFn: () => api.get('/scanned-items/portal-books'),
     enabled: open,
-    // Always refetch when modal opens — stops the dropdown from showing books
-    // that were deleted from MongoDB between sessions.
     staleTime: 0,
     refetchOnMount: 'always',
   });
 
-  // Chapters for the selected book — the user picks the exact chapter that the
-  // generated exercises are inserted into (nothing is auto-created).
   const { data: chapters, isLoading: chaptersLoading } = useQuery({
     queryKey: ['portalChapters', bookChoice],
     queryFn: () => api.get(`/scanned-items/portal-books/${bookChoice}/chapters`),
@@ -46,11 +47,11 @@ export default function GenerateSectionModal({ open, item, onClose }) {
   });
 
   const mutation = useMutation({
-    mutationFn: (payload) => api.post(`/scanned-items/${item.id}/generate-section`, payload),
+    mutationFn: (payload) => api.post('/scanned-items/generate-section-manual', payload),
     onSuccess: (res) => {
       setResult(res.data);
       setErrorMsg(null);
-      queryClient.invalidateQueries({ queryKey: ['scannedItems'] });
+      queryClient.invalidateQueries({ queryKey: ['portalChapters'] });
     },
     onError: (err) => {
       setErrorMsg(err.message || 'Generation failed');
@@ -58,12 +59,16 @@ export default function GenerateSectionModal({ open, item, onClose }) {
     },
   });
 
-  if (!open || !item) return null;
+  if (!open) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setErrorMsg(null);
 
+    if (!latex.trim()) {
+      setErrorMsg('Paste the LaTeX content to generate from.');
+      return;
+    }
     if (!bookChoice) {
       setErrorMsg('Select a book.');
       return;
@@ -73,13 +78,11 @@ export default function GenerateSectionModal({ open, item, onClose }) {
       return;
     }
 
-    mutation.mutate({ bookId: bookChoice, chapterId: chapterChoice });
+    mutation.mutate({ latex, chapterId: chapterChoice, type: exerciseType });
   };
 
   const disabled = mutation.isPending;
 
-  // Build Board/Grade filter options from the books we actually have, then
-  // narrow the Book dropdown to whatever matches the active filters.
   const allBooks = books?.data ?? [];
   const boards = [...new Set(allBooks.map((b) => b.board).filter(Boolean))].sort();
   const grades = [...new Set(allBooks.map((b) => b.grade).filter(Boolean))].sort();
@@ -87,8 +90,6 @@ export default function GenerateSectionModal({ open, item, onClose }) {
     (b) => (!boardFilter || b.board === boardFilter) && (!gradeFilter || b.grade === gradeFilter)
   );
 
-  // Changing a filter may hide the currently-selected book — clear book and
-  // chapter so we never submit something that's no longer visible.
   const handleFilterChange = (setter) => (e) => {
     setter(e.target.value);
     setBookChoice('');
@@ -108,10 +109,6 @@ export default function GenerateSectionModal({ open, item, onClose }) {
         </div>
 
         <div className="p-4 space-y-4">
-          <div className="text-sm text-gray-600">
-            Source: <span className="font-medium text-gray-800">{item.item_data}</span>
-          </div>
-
           {result ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-green-600">
@@ -152,6 +149,39 @@ export default function GenerateSectionModal({ open, item, onClose }) {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">LaTeX content</label>
+                <textarea
+                  value={latex}
+                  onChange={(e) => setLatex(e.target.value)}
+                  disabled={disabled}
+                  rows={8}
+                  placeholder={'Paste the chapter LaTeX here, e.g.\n\\subsection*{1.4 NEWTON\'S LAWS OF MOTION}\n\\subsection*{1.4.1 Newton\'s First Law}\n...'}
+                  className="w-full border rounded px-3 py-2 text-sm font-mono"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Parsed with the same rules as the scanned-item flow (numbered headings →
+                  sections/exercises).
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={exerciseType}
+                  onChange={(e) => {
+                    setExerciseType(e.target.value);
+                    setChapterChoice(''); // valid chapters depend on the type
+                  }}
+                  disabled={disabled}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                >
+                  <option value="EXAMPLE">EXAMPLE</option>
+                  <option value="EXERCISE">EXERCISE</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Board</label>
@@ -198,11 +228,6 @@ export default function GenerateSectionModal({ open, item, onClose }) {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  {booksLoading
-                    ? 'Loading books…'
-                    : `${filteredBooks.length} book${filteredBooks.length === 1 ? '' : 's'} match.`}
-                </p>
               </div>
 
               <div>
@@ -216,19 +241,22 @@ export default function GenerateSectionModal({ open, item, onClose }) {
                   <option value="">
                     {!bookChoice ? '— Select a book first —' : '— Select a chapter —'}
                   </option>
-                  {chapterList.map((c) => (
-                    <option key={c.id} value={c.id} disabled={c.exampleCount > 0}>
-                      {c.order != null ? `Ch ${c.order}: ` : ''}{c.name}
-                      {c.exampleCount > 0 ? ` — has ${c.exampleCount} EXAMPLE` : ''}
-                    </option>
-                  ))}
+                  {chapterList.map((c) => {
+                    const typeCount = exerciseType === 'EXERCISE' ? c.exerciseTypeCount : c.exampleCount;
+                    return (
+                      <option key={c.id} value={c.id} disabled={typeCount > 0}>
+                        {c.order != null ? `Ch ${c.order}: ` : ''}{c.name}
+                        {typeCount > 0 ? ` — has ${typeCount} ${exerciseType}` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
                   {!bookChoice
                     ? 'Pick a book to load its chapters.'
                     : chaptersLoading
                       ? 'Loading chapters…'
-                      : `${chapterList.length} chapter${chapterList.length === 1 ? '' : 's'}. Chapters that already have exercises can't be selected — pick an empty one. Exercises are inserted directly into the chosen chapter; nothing is created.`}
+                      : `Only chapters that already have ${exerciseType} content are blocked — a chapter with the other type is still allowed.`}
                 </p>
               </div>
 

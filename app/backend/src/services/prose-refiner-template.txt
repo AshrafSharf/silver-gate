@@ -1,0 +1,44 @@
+You are an expert educator restructuring a textbook prose passage into a clear, visually-styled, step-by-step explanation suitable for students reviewing a chapter section.
+
+## Original Solution
+The "original_solution" below is typically a single-step JSON whose `step_details[0].explanation` contains a wall of textbook prose (no equations, no expressions). It came from automated extraction of a science / humanities textbook section, and is NOT yet pedagogically structured.
+
+{original_solution}
+
+## Your Task
+Rewrite this into the same JSON schema, but properly structured into multiple steps with visual highlights.
+
+### Restructuring Rules
+1. Split the prose into **3 to 6 logical sub-topics**, each becoming one `step_details` entry. Use natural breakpoints: paragraph boundaries, "(i)/(ii)/(iii)" enumerations, named scientists / laws / phenomena, definitions vs. examples vs. consequences, etc. Do not exceed 6 steps. Do not collapse to 1 step.
+2. Each step's `explanation` field becomes a short bold heading describing what that step covers. Format: `$\textbf{...}$`. Keep it under 12 words. Examples: `$\textbf{Aristotle's view of natural motion}$`, `$\textbf{Galileo's four propositions on inertia}$`, `$\textbf{Definition and example of inertia of rest}$`.
+3. Each step's `expressions` array becomes 2-5 lines of the actual prose content for that sub-topic. Each expression must be wrapped in `$...$`. Inside use `\text{...}` for the prose so it renders correctly in KaTeX, e.g. `"$\text{According to Aristotle, the natural state of earthly bodies is rest.}$"`.
+
+### Visual Styling Rules
+4. For each step, identify the most important takeaway (a definition, a named law, a key conclusion) and wrap exactly one expression in `\htmlClass{light_yellow_box_bigger}{\text{...}}` (for key definitions) OR `\htmlClass{light_green_box_bigger}{\text{...}}` (for conclusions / final results / "the answer"). At most ONE htmlClass per step.
+5. For supporting clarifications, append `\quad \color{blue}{\text{(...)}}` to the relevant expression — short parenthetical, under 10 words. Use sparingly; not every expression needs one.
+6. Use `\textbf{...}` inside `\text{...}` for inline key terms (e.g. `\text{This property is called \textbf{inertia}.}`).
+
+### Overview and Short Cuts
+7. Populate `overview` with a 1-2 sentence summary of what this section teaches. Wrap in `$\text{...}$`. Example: `"$\text{This section traces the historical development of ideas about force and motion, contrasting Aristotle's claim that rest is the natural state with Galileo's principle of inertia.}$"`
+8. Populate `short_cuts` with the key terms / laws / facts a student should remember, as a short bulleted list using `\\` line breaks. Example: `"$\text{Key terms: } \textbf{Inertia} \text{ - resistance to change in motion.} \\\\ \textbf{Natural state (Galileo)} \text{ - rest or uniform motion.}$"`
+
+### Preservation Rules
+9. **Preserve all factual content from the original prose.** Do not invent facts, formulas, or quantities. Every claim in your output must trace back to the input prose.
+10. Keep `problem_statement` unchanged from the input.
+11. `step_index` starts at 1 and increments by 1 for each step.
+
+### Custom User Instructions
+The user may provide additional refinement instructions below. Apply them ON TOP of the above rules — they refine, they don't override the restructuring requirement.
+
+{custom_instructions}
+
+## Format Requirements
+{format_instructions}
+
+## Critical KaTeX Escaping
+- All expressions must start and end with `$`.
+- Use `\\` for a single backslash in JSON (so `\text` becomes `\\text` in JSON, `\htmlClass` becomes `\\htmlClass`).
+- Balance every `{` with `}`.
+- Inside `\text{...}`, do NOT use raw `$` — escape with `\$` if you need a literal dollar sign.
+
+Return ONLY the valid JSON with no additional text, explanation, or formatting before or after the JSON. Your entire response must be valid JSON that can be parsed directly.

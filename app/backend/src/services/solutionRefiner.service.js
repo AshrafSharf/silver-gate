@@ -1,4 +1,7 @@
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { connectToMongoDB, getMongoConnection } from '../config/mongoConnection.js';
 import { toObjectId } from './reverse-sync/helpers.js';
 import { config } from '../config/index.js';
@@ -10,26 +13,65 @@ const DEEPSEEK_API_URL = config.deepseek.apiUrl;
 const DEEPSEEK_API_KEY = config.deepseek.apiKey;
 const DEEPSEEK_MODEL = config.deepseek.model;
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 /* ------------------------------------------------------------------ */
 /* Fixed refinement prompt                                             */
 /* ------------------------------------------------------------------ */
 
-const SYSTEM_PROMPT =
-  'You are an expert academic tutor and content editor. You refine existing ' +
-  'step-by-step solutions so they are clearer, pedagogically sound, well ' +
-  'structured, and easy for a student to follow. You preserve correctness and ' +
-  'all mathematical/LaTeX notation, fix obvious errors, and remove noise. You ' +
-  'always respond with a single valid JSON object and nothing else.';
+// Prose refiner template ported from robogebra-langchain
+// (solution_refiner/prose-refiner-template.txt). It restructures a single wall
+// of textbook prose into a multi-step, visually-styled StepByStepSolution.
+const PROSE_TEMPLATE = readFileSync(join(__dirname, 'prose-refiner-template.txt'), 'utf8');
 
-const REFINE_INSTRUCTIONS = [
-  'Refine the following step-by-step solution. Requirements:',
-  '- Return a single JSON object using the EXACT same schema and top-level keys as the input. Do not add or remove top-level keys.',
-  '- Improve the clarity and correctness of each step\'s explanation; keep them concise and student-friendly.',
-  '- Preserve all mathematical expressions and LaTeX; fix obviously broken LaTeX where needed.',
-  '- Keep step_details as an ordered array and renumber step_index sequentially from 1.',
-  '- Do not invent unnecessary new steps and do not drop essential steps.',
-  '- Respond with ONLY the refined JSON object (no markdown, no commentary).',
+// Equivalent of the langchain PydanticOutputParser format_instructions for the
+// StepByStepSolutionWithOverview model — describes the exact output JSON schema.
+const FORMAT_INSTRUCTIONS = [
+  'The output must be a single JSON object that matches this exact schema (no extra top-level keys):',
+  '{',
+  '  "problem_statement": "string",',
+  '  "overview": "string",',
+  '  "step_details": [',
+  '    { "step_index": 1, "explanation": "string", "expressions": ["string", "..."] }',
+  '  ],',
+  '  "short_cuts": "string"',
+  '}',
+  'Rules: step_index is an integer starting at 1 and incrementing by 1; expressions is an array of',
+  'strings (use [] if a step has none); every expression string must start and end with "$".',
 ].join('\n');
+
+// Fill the prose template's named placeholders. Uses split/join so the many
+// literal LaTeX braces ({\textbf{...}} etc.) in the template are left untouched.
+function buildPrompt(stepOutputJson, context) {
+  const originalSolution = JSON.stringify(stepOutputJson, null, 2);
+  const customInstructions = [
+    context.subject ? `Subject: ${context.subject}.` : '',
+    context.exerciseName ? `This passage is from the section "${context.exerciseName}".` : '',
+  ].filter(Boolean).join(' ');
+
+  return PROSE_TEMPLATE
+    .split('{original_solution}').join(originalSolution)
+    .split('{custom_instructions}').join(customInstructions)
+    .split('{format_instructions}').join(FORMAT_INSTRUCTIONS);
+}
+
+// Coerce the model output into the StepByStepSolutionWithOverview shape so the
+// saved step_output_json always has the right structure even if a field is missing.
+function normalizeRefined(parsed, original) {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.step_details)) {
+    throw new Error('Refined output is not a valid step-by-step solution JSON');
+  }
+  return {
+    problem_statement: parsed.problem_statement ?? original?.problem_statement ?? '',
+    overview: parsed.overview ?? '',
+    short_cuts: parsed.short_cuts ?? '',
+    step_details: parsed.step_details.map((s, i) => ({
+      step_index: Number.isInteger(s?.step_index) ? s.step_index : i + 1,
+      explanation: s?.explanation ?? '',
+      expressions: Array.isArray(s?.expressions) ? s.expressions : [],
+    })),
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* In-memory job registry                                             */
@@ -42,9 +84,9 @@ const jobs = new Map();
 const latestJobByScope = new Map();
 const MAX_TRACKED_ERRORS = 25;
 
-// A job is scoped to a whole chapter or to a single exercise within it.
-function scopeKey(chapterId, exerciseId) {
-  return `${chapterId}:${exerciseId || 'ALL'}`;
+// A job is scoped to a whole chapter or to a single common parent section.
+function scopeKey(chapterId, commonParent) {
+  return `${chapterId}:${commonParent || 'ALL'}`;
 }
 
 function publicJob(job) {
@@ -53,8 +95,7 @@ function publicJob(job) {
     id: job.id,
     chapterId: job.chapterId,
     chapterName: job.chapterName,
-    exerciseId: job.exerciseId,
-    exerciseName: job.exerciseName,
+    commonParent: job.commonParent,
     bookId: job.bookId,
     bookName: job.bookName,
     subject: job.subject,
@@ -114,23 +155,17 @@ function parseJsonLoose(content) {
 }
 
 async function refineStepOutput(stepOutputJson, context) {
-  const userPrompt = [
-    REFINE_INSTRUCTIONS,
-    '',
-    `Subject: ${context.subject || 'GENERAL'}`,
-    context.exerciseName ? `Problem / section: ${context.exerciseName}` : '',
-    '',
-    'Existing solution JSON to refine:',
-    JSON.stringify(stepOutputJson),
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const prompt = buildPrompt(stepOutputJson, context);
 
-  const content = await callDeepSeek([
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userPrompt },
-  ]);
-  return parseJsonLoose(content);
+  // Print the exact prompt we send to the LLM before calling it.
+  logger.info(
+    LOG,
+    `DeepSeek prompt for "${context.exerciseName || 'solution'}":\n` +
+    `----- PROMPT -----\n${prompt}\n------------------`
+  );
+
+  const content = await callDeepSeek([{ role: 'user', content: prompt }]);
+  return normalizeRefined(parseJsonLoose(content), stepOutputJson);
 }
 
 /* ------------------------------------------------------------------ */
@@ -151,19 +186,12 @@ async function resolveContext(db, chapterOid) {
   return { chapter, book, subject: book?.subject ?? null };
 }
 
-async function getSolutions(db, chapterOid, exerciseOid = null) {
-  let exercises;
-  if (exerciseOid) {
-    const ex = await db.collection('exercise').findOne(
-      { _id: exerciseOid },
-      { projection: { _id: 1, name: 1 } }
-    );
-    exercises = ex ? [ex] : [];
-  } else {
-    exercises = await db.collection('exercise')
-      .find({ 'chapter.$id': chapterOid }, { projection: { _id: 1, name: 1 } })
-      .toArray();
-  }
+async function getSolutions(db, chapterOid, commonParent = null) {
+  const query = { 'chapter.$id': chapterOid };
+  if (commonParent) query.common_parent_section_name = commonParent;
+  const exercises = await db.collection('exercise')
+    .find(query, { projection: { _id: 1, name: 1 } })
+    .toArray();
   if (exercises.length === 0) return [];
   const exerciseIds = exercises.map((e) => e._id);
   const nameByExercise = new Map(exercises.map((e) => [e._id.toString(), e.name]));
@@ -211,48 +239,73 @@ function hasContent(stepOutput) {
 
 export const solutionRefinerService = {
   /**
-   * Read-only: list a chapter's exercises (with solution counts) so the UI can
-   * let the user scope a refinement to one exercise instead of the whole chapter.
+   * Read-only: list a chapter's distinct common parent sections (e.g.
+   * "1.4 NEWTON'S LAWS OF MOTION") with the number of exercises and solutions
+   * under each, so the UI can scope a refinement to one whole section.
    */
-  async listExercises(chapterId) {
+  async listCommonParents(chapterId) {
     await connectToMongoDB();
     const db = getMongoConnection().db;
     const chapterOid = toObjectId(chapterId);
-    const exercises = await db.collection('exercise')
-      .find({ 'chapter.$id': chapterOid }, { projection: { name: 1, order: 1, index: 1 } })
-      .sort({ order: 1, name: 1 })
-      .toArray();
 
-    return Promise.all(exercises.map(async (ex) => {
-      const items = await db.collection('exercise_item')
-        .find({ 'exercise.$id': ex._id }, { projection: { _id: 1 } })
+    const exercises = await db.collection('exercise')
+      .find({ 'chapter.$id': chapterOid }, { projection: { _id: 1, common_parent_section_name: 1, order: 1 } })
+      .sort({ order: 1 })
+      .toArray();
+    if (exercises.length === 0) return [];
+
+    const LABEL = (cp) => cp || '(no section)';
+    // Group exercise ids by common parent, preserving first-seen (order) sequence.
+    const groups = new Map(); // commonParent -> exerciseIds[]
+    const cpByExercise = new Map();
+    for (const ex of exercises) {
+      const cp = LABEL(ex.common_parent_section_name);
+      cpByExercise.set(ex._id.toString(), cp);
+      if (!groups.has(cp)) groups.set(cp, []);
+      groups.get(cp).push(ex._id);
+    }
+
+    // Solution counts per common parent (bulk: item → exercise → common parent).
+    const items = await db.collection('exercise_item')
+      .find({ 'exercise.$id': { $in: exercises.map((e) => e._id) } }, { projection: { _id: 1, exercise: 1 } })
+      .toArray();
+    const cpByItem = new Map();
+    for (const it of items) {
+      const exOid = refOid(it.exercise);
+      const cp = exOid ? cpByExercise.get(exOid.toString()) : null;
+      if (cp) cpByItem.set(it._id.toString(), cp);
+    }
+    const solCountByCp = new Map();
+    if (items.length) {
+      const sols = await db.collection('exercise_solution')
+        .find({ 'exercise_item.$id': { $in: items.map((i) => i._id) } }, { projection: { _id: 1, exercise_item: 1 } })
         .toArray();
-      const itemIds = items.map((i) => i._id);
-      const solutionCount = itemIds.length
-        ? await db.collection('exercise_solution').countDocuments({ 'exercise_item.$id': { $in: itemIds } })
-        : 0;
-      return {
-        id: ex._id.toString(),
-        name: ex.name,
-        order: ex.order ?? null,
-        index: ex.index ?? null,
-        solutionCount,
-      };
+      for (const s of sols) {
+        const itemOid = refOid(s.exercise_item);
+        const cp = itemOid ? cpByItem.get(itemOid.toString()) : null;
+        if (cp) solCountByCp.set(cp, (solCountByCp.get(cp) || 0) + 1);
+      }
+    }
+
+    return [...groups.entries()].map(([commonParent, exerciseIds]) => ({
+      commonParent,
+      exerciseCount: exerciseIds.length,
+      solutionCount: solCountByCp.get(commonParent) || 0,
     }));
   },
 
   /**
-   * Kick off a background job that refines every solution in a chapter (or a
-   * single exercise within it, if exerciseId is given) via DeepSeek and saves
-   * the result back to MongoDB. Returns immediately with the job descriptor;
-   * progress is polled via getJob/getJobForScope.
+   * Kick off a background job that refines every solution in a chapter (or in a
+   * single common parent section within it, if commonParent is given) via
+   * DeepSeek and saves the result back to MongoDB. Returns immediately with the
+   * job descriptor; progress is polled via getJob/getJobForScope.
    */
-  async startChapterRefinement(chapterId, exerciseId = null) {
+  async startChapterRefinement(chapterId, commonParent = null) {
     if (!DEEPSEEK_API_KEY) {
       throw new Error('DeepSeek API key not configured. Set DEEPSEEK_API_KEY in the environment.');
     }
 
-    const key = scopeKey(chapterId, exerciseId);
+    const key = scopeKey(chapterId, commonParent);
     const runningId = latestJobByScope.get(key);
     if (runningId && jobs.get(runningId)?.status === 'running') {
       throw new Error('A refinement job is already running for this selection.');
@@ -263,27 +316,21 @@ export const solutionRefinerService = {
     const chapterOid = toObjectId(chapterId);
     const { chapter, book, subject } = await resolveContext(db, chapterOid);
 
-    let exerciseOid = null;
-    let exerciseName = null;
-    if (exerciseId) {
-      exerciseOid = toObjectId(exerciseId);
-      const ex = await db.collection('exercise').findOne(
-        { _id: exerciseOid },
-        { projection: { name: 1, chapter: 1 } }
-      );
-      if (!ex) throw new Error('Selected exercise not found in the portal.');
-      if (refOid(ex.chapter)?.toString() !== chapterOid.toString()) {
-        throw new Error('Selected exercise does not belong to the selected chapter.');
+    if (commonParent) {
+      const cnt = await db.collection('exercise').countDocuments({
+        'chapter.$id': chapterOid,
+        common_parent_section_name: commonParent,
+      });
+      if (cnt === 0) {
+        throw new Error('No exercises found for the selected section in this chapter.');
       }
-      exerciseName = ex.name;
     }
 
     const job = {
       id: randomUUID(),
       chapterId,
       chapterName: chapter.name,
-      exerciseId: exerciseId || null,
-      exerciseName,
+      commonParent: commonParent || null,
       bookId: book?._id?.toString() ?? null,
       bookName: book?.name ?? null,
       subject,
@@ -301,7 +348,7 @@ export const solutionRefinerService = {
     latestJobByScope.set(key, job.id);
 
     // Fire-and-forget — runs in the background, progress lives on the job object.
-    this.runJob(job.id, chapterOid, exerciseOid, subject).catch((err) => {
+    this.runJob(job.id, chapterOid, commonParent, subject).catch((err) => {
       job.status = 'failed';
       job.finishedAt = new Date().toISOString();
       job.errors.push({ message: err.message });
@@ -311,13 +358,13 @@ export const solutionRefinerService = {
     return publicJob(job);
   },
 
-  async runJob(jobId, chapterOid, exerciseOid, subject) {
+  async runJob(jobId, chapterOid, commonParent, subject) {
     const job = jobs.get(jobId);
     const db = getMongoConnection().db;
 
-    const solutions = await getSolutions(db, chapterOid, exerciseOid);
+    const solutions = await getSolutions(db, chapterOid, commonParent);
     job.total = solutions.length;
-    logger.info(LOG, `Job ${jobId}: ${solutions.length} solution(s) to refine (chapter ${chapterOid}${exerciseOid ? `, exercise ${exerciseOid}` : ''})`);
+    logger.info(LOG, `Job ${jobId}: ${solutions.length} solution(s) to refine (chapter ${chapterOid}${commonParent ? `, section "${commonParent}"` : ''})`);
 
     for (const { sol, exerciseName } of solutions) {
       try {
@@ -356,8 +403,8 @@ export const solutionRefinerService = {
     return publicJob(jobs.get(jobId));
   },
 
-  getJobForScope(chapterId, exerciseId = null) {
-    const id = latestJobByScope.get(scopeKey(chapterId, exerciseId));
+  getJobForScope(chapterId, commonParent = null) {
+    const id = latestJobByScope.get(scopeKey(chapterId, commonParent));
     return id ? publicJob(jobs.get(id)) : null;
   },
 };

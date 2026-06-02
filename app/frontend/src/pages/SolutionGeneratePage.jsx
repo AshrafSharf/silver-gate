@@ -8,7 +8,7 @@ export default function SolutionGeneratePage() {
   const [gradeFilter, setGradeFilter] = useState('');
   const [bookChoice, setBookChoice] = useState('');
   const [chapterChoice, setChapterChoice] = useState('');
-  const [exerciseChoice, setExerciseChoice] = useState(''); // '' = all exercises
+  const [parentChoice, setParentChoice] = useState(''); // '' = all sections
   const [jobId, setJobId] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -27,20 +27,20 @@ export default function SolutionGeneratePage() {
     staleTime: 0,
   });
 
-  // Exercises in the selected chapter (so a refinement can be scoped to one).
-  const { data: exercises, isLoading: exercisesLoading } = useQuery({
-    queryKey: ['solutionRefineExercises', chapterChoice],
-    queryFn: () => api.get(`/solution-refine/chapter/${chapterChoice}/exercises`),
+  // Common parent sections in the selected chapter (each groups many exercises).
+  const { data: parents, isLoading: parentsLoading } = useQuery({
+    queryKey: ['solutionRefineCommonParents', chapterChoice],
+    queryFn: () => api.get(`/solution-refine/chapter/${chapterChoice}/common-parents`),
     enabled: !!chapterChoice,
     staleTime: 0,
   });
 
-  // Latest job for the current selection (chapter + optional exercise) — lets us
+  // Latest job for the current selection (chapter + optional section) — lets us
   // resume the progress view.
   const { data: chapterJob } = useQuery({
-    queryKey: ['solutionRefineChapterJob', chapterChoice, exerciseChoice],
+    queryKey: ['solutionRefineChapterJob', chapterChoice, parentChoice],
     queryFn: () =>
-      api.get(`/solution-refine/chapter/${chapterChoice}/job${exerciseChoice ? `?exerciseId=${exerciseChoice}` : ''}`),
+      api.get(`/solution-refine/chapter/${chapterChoice}/job${parentChoice ? `?commonParent=${encodeURIComponent(parentChoice)}` : ''}`),
     enabled: !!chapterChoice,
     staleTime: 0,
   });
@@ -61,8 +61,8 @@ export default function SolutionGeneratePage() {
   });
 
   const startMutation = useMutation({
-    mutationFn: ({ chapterId, exerciseId }) =>
-      api.post(`/solution-refine/chapter/${chapterId}`, exerciseId ? { exerciseId } : {}),
+    mutationFn: ({ chapterId, commonParent }) =>
+      api.post(`/solution-refine/chapter/${chapterId}`, commonParent ? { commonParent } : {}),
     onSuccess: (res) => {
       setJobId(res.data.id);
       setErrorMsg(null);
@@ -77,7 +77,7 @@ export default function SolutionGeneratePage() {
     (b) => (!boardFilter || b.board === boardFilter) && (!gradeFilter || b.grade === gradeFilter)
   );
   const chapterList = chapters?.data ?? [];
-  const exerciseList = exercises?.data ?? [];
+  const parentList = parents?.data ?? [];
 
   const job = jobStatus?.data || chapterJob?.data || null;
   const isRunning = job?.status === 'running';
@@ -87,25 +87,25 @@ export default function SolutionGeneratePage() {
     setter(e.target.value);
     setBookChoice('');
     setChapterChoice('');
-    setExerciseChoice('');
+    setParentChoice('');
     setJobId(null);
   };
 
   const handleBookChange = (e) => {
     setBookChoice(e.target.value);
     setChapterChoice('');
-    setExerciseChoice('');
+    setParentChoice('');
     setJobId(null);
   };
 
   const handleChapterChange = (e) => {
     setChapterChoice(e.target.value);
-    setExerciseChoice('');
+    setParentChoice('');
     setJobId(null);
   };
 
-  const handleExerciseChange = (e) => {
-    setExerciseChoice(e.target.value);
+  const handleParentChange = (e) => {
+    setParentChoice(e.target.value);
     setJobId(null);
   };
 
@@ -115,7 +115,7 @@ export default function SolutionGeneratePage() {
       setErrorMsg('Select a chapter first.');
       return;
     }
-    startMutation.mutate({ chapterId: chapterChoice, exerciseId: exerciseChoice || null });
+    startMutation.mutate({ chapterId: chapterChoice, commonParent: parentChoice || null });
   };
 
   return (
@@ -123,8 +123,9 @@ export default function SolutionGeneratePage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800">Solution Generate</h1>
         <p className="text-gray-500 mt-1">
-          Pick a book and chapter, then refine every solution in that chapter with DeepSeek.
-          The job runs in the background and saves the refined solutions back to the portal.
+          Pick a book and chapter (and optionally a single section), then refine those
+          solutions with DeepSeek. The job runs in the background and saves the refined
+          solutions back to the portal.
         </p>
       </div>
 
@@ -195,9 +196,31 @@ export default function SolutionGeneratePage() {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Section / common parent (optional scope) */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
+          <select
+            value={parentChoice}
+            onChange={handleParentChange}
+            disabled={!chapterChoice || parentsLoading}
+            className="w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">
+              {!chapterChoice ? '— Select a chapter first —' : 'All sections in chapter'}
+            </option>
+            {parentList.map((p) => (
+              <option key={p.commonParent} value={p.commonParent}>
+                {p.commonParent}
+                {` — ${p.exerciseCount} exercise${p.exerciseCount === 1 ? '' : 's'}, ${p.solutionCount} solution${p.solutionCount === 1 ? '' : 's'}`}
+              </option>
+            ))}
+          </select>
           <p className="text-xs text-gray-500 mt-1">
-            Every solution under the selected chapter is refined. The original is backed up
-            to <code>step_output_json_original</code> before it is overwritten.
+            Leave as <em>All sections</em> to refine the whole chapter, or pick one section
+            (e.g. <em>1.4 NEWTON'S LAWS OF MOTION</em>) to refine every solution under it. The
+            original is backed up to <code>step_output_json_original</code> before it is overwritten.
           </p>
         </div>
 
@@ -243,6 +266,7 @@ export default function SolutionGeneratePage() {
               )}
               <span className="font-medium text-gray-800">
                 {job.bookName ? `${job.bookName} — ` : ''}{job.chapterName}
+                {job.commonParent ? ` — ${job.commonParent}` : ' — all sections'}
               </span>
             </div>
             <span className={`text-xs px-2 py-1 rounded-full ${

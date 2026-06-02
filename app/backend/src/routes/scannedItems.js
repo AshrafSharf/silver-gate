@@ -252,6 +252,14 @@ router.put('/:id/pre-extracted', asyncHandler(async (req, res) => {
   res.json({ success: true, data: item });
 }));
 
+// Generate section/exercise rows in portal MongoDB from manually-pasted LaTeX.
+// Must come before `/:id/generate-section` so the literal path is matched first.
+router.post('/generate-section-manual', asyncHandler(async (req, res) => {
+  const { latex, chapterId, type } = req.body || {};
+  const result = await chapterSectionExtractionService.generateSectionsManual({ latex, chapterId, type });
+  res.json({ success: true, data: result });
+}));
+
 // Generate section/exercise rows in portal MongoDB from this scanned item's LaTeX.
 router.post('/:id/generate-section', asyncHandler(async (req, res) => {
   const result = await chapterSectionExtractionService.generateSections(req.params.id, req.body || {});
