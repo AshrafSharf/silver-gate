@@ -40,7 +40,10 @@ export const config = {
   gemini: {
     apiKey: process.env.GOOGLE_API_KEY,
     apiUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-2.0-flash',
+    // gemini-2.0-flash was retired (404 "no longer available") and its 8192
+    // output-token cap was too small to echo an annotated chapter back anyway.
+    // 2.5-flash allows 65536.
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   },
 };
 

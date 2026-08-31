@@ -77,17 +77,12 @@ router.post('/prepare', asyncHandler(async (req, res) => {
     });
   }
 
-  if (!solution_set_id) {
-    return res.status(400).json({
-      success: false,
-      error: 'solution_set_id is required',
-    });
-  }
-
+  // solution_set_id is optional — an Academic Book's examples carry their own
+  // working, and exercise solutions can be merged in later.
   try {
     const preparedData = await lessonsService.prepare({
       question_set_id,
-      solution_set_id,
+      solution_set_id: solution_set_id || null,
     });
 
     res.json({ success: true, data: preparedData });
@@ -110,12 +105,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 // Create a new lesson (or multiple lessons if lesson_item_count or range_configs is provided)
 router.post('/', asyncHandler(async (req, res) => {
-  const { name, common_parent_section_name, parent_section_name, lesson_item_count, range_configs, question_set_id, solution_set_id, items, question_type } = req.body;
+  const { name, common_parent_section_name, parent_section_name, lesson_item_count, range_configs, block_configs, question_set_id, solution_set_id, items, question_type } = req.body;
   console.log('POST /lessons - question_type:', question_type);
   console.log('POST /lessons - range_configs:', JSON.stringify(range_configs, null, 2));
 
-  // Name is required for Auto Split mode, not for Manual Range mode (which has lesson_name per range)
-  if (!range_configs && (!name || !name.trim())) {
+  // Name is required for Auto Split mode only. Manual Range mode carries a
+  // lesson_name per range, and Block mode takes each lesson's name from the
+  // block itself.
+  if (!range_configs && !block_configs && (!name || !name.trim())) {
     return res.status(400).json({
       success: false,
       error: 'Lesson name is required',
@@ -129,11 +126,25 @@ router.post('/', asyncHandler(async (req, res) => {
     });
   }
 
-  if (!solution_set_id) {
-    return res.status(400).json({
-      success: false,
-      error: 'solution_set_id is required',
-    });
+  // solution_set_id is optional: Academic Book examples carry their working from
+  // the chapter, and an exercise's solutions can be merged in later.
+  if (block_configs) {
+    if (!Array.isArray(block_configs)) {
+      return res.status(400).json({
+        success: false,
+        error: 'block_configs must be an array',
+      });
+    }
+
+    for (let i = 0; i < block_configs.length; i++) {
+      const config = block_configs[i];
+      if (!config || !config.block_type || !config.block_index) {
+        return res.status(400).json({
+          success: false,
+          error: `Block ${i + 1}: block_type and block_index are required`,
+        });
+      }
+    }
   }
 
   // Validate range_configs if provided
@@ -211,8 +222,9 @@ router.post('/', asyncHandler(async (req, res) => {
       parent_section_name: parent_section_name?.trim() || null,
       lesson_item_count: lesson_item_count ? parseInt(lesson_item_count, 10) : null,
       range_configs: range_configs || null,
+      block_configs: block_configs || null,
       question_set_id,
-      solution_set_id,
+      solution_set_id: solution_set_id || null,
       items, // Optional: pre-edited items from the prepare modal
       question_type: question_type || 'OTHER',
     });

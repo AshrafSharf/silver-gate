@@ -1,5 +1,13 @@
 import { supabase } from '../config/database.js';
 import { config } from '../config/index.js';
+import {
+  ACADEMIC_BOOK_ANNOTATION_INSTRUCTIONS,
+  AB_MARKERS,
+} from './academicBook.instructions.js';
+import {
+  ACADEMIC_BOOK_SOLUTION_ANNOTATION_INSTRUCTIONS,
+  ABS_MARKERS,
+} from './academicBookSolution.instructions.js';
 
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
@@ -181,7 +189,204 @@ const ANNOTATION_CONFIGS = {
     endMarker: S_END_MARKER,
     label: 'solution',
   },
+  // Academic textbooks need block structure (example vs exercise, plus the
+  // topic each block sits under), not a flat list of questions — see
+  // academicBook.instructions.js.
+  academic_book: {
+    instructions: ACADEMIC_BOOK_ANNOTATION_INSTRUCTIONS,
+    startMarker: AB_MARKERS.EXERCISE_START,
+    endMarker: AB_MARKERS.EXERCISE_END,
+    label: 'academic book',
+    extraMarkerCounts: [
+      ['examples', AB_MARKERS.EXAMPLE_START, AB_MARKERS.EXAMPLE_END],
+    ],
+    splitPatterns: 'chapter',
+  },
+  // A textbook solutions guide groups worked solutions under the exercise they
+  // answer. The flat `solution` config above assumes competitive-exam answer-key
+  // headers ("8. (D)") and finds nothing here — see
+  // academicBookSolution.instructions.js.
+  academic_book_solution: {
+    instructions: ACADEMIC_BOOK_SOLUTION_ANNOTATION_INSTRUCTIONS,
+    startMarker: ABS_MARKERS.EXERCISE_START,
+    endMarker: ABS_MARKERS.EXERCISE_END,
+    label: 'academic book solution',
+    extraMarkerCounts: [
+      ['example solutions', ABS_MARKERS.EXAMPLE_START, ABS_MARKERS.EXAMPLE_END],
+    ],
+    splitPatterns: 'solutions',
+  },
 };
+
+/**
+ * Pick the annotation config for an item.
+ * `sourceType` comes from the caller ('Academic Book' | 'Question Bank') and
+ * selects the grammar; `itemType` selects whether it is the question or the
+ * solution side of that grammar.
+ */
+export function resolveAnnotationConfig(itemType, sourceType) {
+  if (itemType === 'solution') {
+    return sourceType === 'Academic Book'
+      ? ANNOTATION_CONFIGS.academic_book_solution
+      : ANNOTATION_CONFIGS.solution;
+  }
+  if (sourceType === 'Academic Book') return ANNOTATION_CONFIGS.academic_book;
+  return ANNOTATION_CONFIGS.question;
+}
+
+/** True for the two configs whose grammar and scale need Gemini, not LlamaParse. */
+function isAcademicBookConfig(cfg) {
+  return cfg === ANNOTATION_CONFIGS.academic_book || cfg === ANNOTATION_CONFIGS.academic_book_solution;
+}
+
+export const ANNOTATION_PROVIDERS = {
+  LLAMAPARSE: 'llamaparse',
+  GEMINI: 'gemini',
+};
+
+const GEMINI_API_URL = config.gemini.apiUrl;
+const GEMINI_API_KEY = config.gemini.apiKey;
+const GEMINI_MODEL = config.gemini.model;
+
+// Annotation echoes the whole document back, so a chunk's OUTPUT has to fit in
+// the model's response budget — the binding constraint, not the input window.
+// gemini-2.5-flash allows 65536 output tokens, which would fit a whole chapter,
+// but chunks are kept small anyway: this is a mechanical line-by-line task and
+// instruction adherence degrades over long echoes. Six cheap calls beat one
+// long one that drifts halfway through.
+const ANNOTATION_CHUNK_CHARS = 12000;
+const ANNOTATION_MAX_OUTPUT_TOKENS = 65536;
+
+// Headings that are safe to cut a document at, per annotation kind.
+//
+// A chapter may only be cut at topic headings (`\subsection*{1.3 …}`): an example
+// or exercise never spans one, and each chunk then carries the topic its blocks
+// must be attributed to. Exercise headings are a *fallback* — cutting there is
+// only acceptable because the topic travels with the chunk as a hint.
+//
+// A solutions guide has no topic headings at all; its blocks are delimited by the
+// exercise (or example) headings themselves, and each block is self-identifying,
+// so those are the primary cut points and there is nothing safe below them.
+export const ANNOTATION_SPLIT_PATTERNS = {
+  chapter: {
+    primary: /^\\subsection\*\{[^}]*\}\s*$/gm,
+    // Only headings that are clearly exercises qualify — splitting at an
+    // OCR-produced `\section*{Solution :}` would cut a worked example away from
+    // its statement.
+    secondary: /^\\section\*\{\s*(?:(?:UNIT\s+|MISCELLANEOUS\s+)?EXERCISE|Exercise)[^}]*\}\s*$/gim,
+    hintLabel: 'CURRENT TOPIC',
+  },
+  solutions: {
+    primary: /^\\section\*\{[^}]*(?:EXERCISE|Exercise|EXAMPLE|Example)[^}]*\}\s*$/gm,
+    secondary: null,
+    hintLabel: 'CURRENT EXERCISE / EXAMPLE',
+  },
+};
+
+/**
+ * Split a document into chunks that never cut through a block.
+ *
+ * Each chunk gets a `headingHint` naming the heading in force at its start, so
+ * blocks appearing before the first heading of a chunk are still attributable.
+ */
+export function splitForAnnotation(content, options = {}) {
+  const {
+    maxChars = ANNOTATION_CHUNK_CHARS,
+    patterns = ANNOTATION_SPLIT_PATTERNS.chapter,
+  } = options;
+
+  const primaryRe = new RegExp(patterns.primary.source, patterns.primary.flags);
+
+  // Cut points at each heading.
+  const cuts = [];
+  let match;
+  while ((match = primaryRe.exec(content)) !== null) {
+    cuts.push({ index: match.index, heading: match[0].trim() });
+  }
+
+  const sections = [];
+  if (cuts.length === 0 || cuts[0].index > 0) {
+    sections.push({ text: content.slice(0, cuts.length ? cuts[0].index : content.length), heading: null });
+  }
+  cuts.forEach((cut, i) => {
+    const end = i + 1 < cuts.length ? cuts[i + 1].index : content.length;
+    sections.push({ text: content.slice(cut.index, end), heading: cut.heading });
+  });
+
+  // Pack sections into chunks, carrying the last seen heading forward as the hint.
+  const chunks = [];
+  let current = '';
+  let currentHint = null;
+  let pendingHint = null;
+
+  const flush = () => {
+    if (current.trim() === '') return;
+    chunks.push({ text: current, headingHint: currentHint });
+    current = '';
+    currentHint = pendingHint;
+  };
+
+  for (const section of sections) {
+    if (current !== '' && current.length + section.text.length > maxChars) {
+      flush();
+    }
+    if (current === '') currentHint = pendingHint;
+    current += section.text;
+    if (section.heading) pendingHint = section.heading;
+
+    // A single section bigger than the budget is emitted on its own; the model
+    // handles it as one oversized chunk rather than being cut mid-block.
+    if (current.length >= maxChars) flush();
+  }
+  flush();
+
+  // A single section can exceed the budget on its own (NCERT topics 1.3 and 1.5
+  // are ~11KB each). Split those further at the secondary headings, which is safe
+  // because the primary heading travels with the chunk as headingHint.
+  if (!patterns.secondary) return chunks;
+
+  const secondaryRe = new RegExp(patterns.secondary.source, patterns.secondary.flags);
+  const primaryScanRe = new RegExp(patterns.primary.source, patterns.primary.flags);
+
+  const result = [];
+  for (const chunk of chunks) {
+    if (chunk.text.length <= maxChars) {
+      result.push(chunk);
+      continue;
+    }
+
+    const points = [];
+    let m;
+    secondaryRe.lastIndex = 0;
+    while ((m = secondaryRe.exec(chunk.text)) !== null) {
+      if (m.index > 0) points.push(m.index);
+    }
+
+    if (points.length === 0) {
+      // Nothing safe to split on — emit oversized and let the MAX_TOKENS guard
+      // report it rather than cutting mid-block.
+      result.push(chunk);
+      continue;
+    }
+
+    const bounds = [0, ...points, chunk.text.length];
+    for (let i = 0; i < bounds.length - 1; i++) {
+      const piece = chunk.text.slice(bounds[i], bounds[i + 1]);
+      if (piece.trim() === '') continue;
+
+      // The heading in force at this piece is the last primary heading appearing
+      // BEFORE it within the chunk — not the hint carried in from the previous
+      // chunk, which would attribute EXERCISE 1.3 to topic 1.2.
+      const preceding = chunk.text.slice(0, bounds[i]).match(primaryScanRe);
+      result.push({
+        text: piece,
+        headingHint: preceding ? preceding[preceding.length - 1].trim() : chunk.headingHint,
+      });
+    }
+  }
+
+  return result;
+}
 
 export const preExtractionService = {
   /**
@@ -189,7 +394,7 @@ export const preExtractionService = {
    * Picks the question or solution prompt based on the item's item_type.
    * Stores the result in scanned_items.pre_extracted.
    */
-  async annotate(scannedItemId) {
+  async annotate(scannedItemId, { sourceType = 'Question Bank', provider = null } = {}) {
     const { data: item, error: fetchError } = await supabase
       .from('scanned_items')
       .select('id, latex_doc, latex_conversion_status, item_type')
@@ -202,26 +407,78 @@ export const preExtractionService = {
       throw new Error('LaTeX conversion is not completed for this item');
     }
 
-    const cfg = ANNOTATION_CONFIGS[item.item_type] || ANNOTATION_CONFIGS.question;
+    const cfg = resolveAnnotationConfig(item.item_type, sourceType);
 
-    console.log(`[PRE-EXTRACT] Item ${scannedItemId} (type: ${item.item_type || 'question'}): latex_doc size ${Math.round(item.latex_doc.length / 1024)}KB`);
+    console.log(`[PRE-EXTRACT] Item ${scannedItemId} (type: ${item.item_type || 'question'}, source: ${sourceType}): latex_doc size ${Math.round(item.latex_doc.length / 1024)}KB`);
     console.log(`[PRE-EXTRACT] ===== ANNOTATION PROMPT (${cfg.label}) =====`);
     console.log(cfg.instructions);
     console.log(`[PRE-EXTRACT] ===== END PROMPT (length: ${cfg.instructions.length}) =====`);
 
-    const jobId = await this.submitToLlamaParse(item.latex_doc, cfg.instructions);
-    console.log(`[PRE-EXTRACT] LlamaParse job: ${jobId}`);
+    // Academic-book annotation is structural and runs over a whole chapter, so
+    // it defaults to Gemini; LlamaParse has been observed returning documents of
+    // that size unchanged.
+    const chosenProvider =
+      provider || (isAcademicBookConfig(cfg) ? ANNOTATION_PROVIDERS.GEMINI : ANNOTATION_PROVIDERS.LLAMAPARSE);
+    console.log(`[PRE-EXTRACT] Provider: ${chosenProvider}`);
 
-    const rawAnnotated = await this.pollForCompletion(jobId);
+    // LlamaParse cannot perform this annotation: on a 47KB chapter it returned
+    // the document byte-for-byte unchanged. Refuse up front instead of spending
+    // a request to rediscover it.
+    if (isAcademicBookConfig(cfg) && chosenProvider === ANNOTATION_PROVIDERS.LLAMAPARSE) {
+      throw new Error(
+        'LlamaParse cannot annotate academic books — it returns large documents unchanged. ' +
+        'Use the Gemini provider (or leave the provider on Auto).'
+      );
+    }
+
+    let rawAnnotated;
+    if (chosenProvider === ANNOTATION_PROVIDERS.GEMINI) {
+      rawAnnotated = await this.annotateWithGemini(item.latex_doc, cfg.instructions, cfg.label, cfg.splitPatterns);
+    } else {
+      const jobId = await this.submitToLlamaParse(item.latex_doc, cfg.instructions);
+      console.log(`[PRE-EXTRACT] LlamaParse job: ${jobId}`);
+      rawAnnotated = await this.pollForCompletion(jobId);
+    }
     const annotated = normalizeMarkers(rawAnnotated);
     console.log(`[PRE-EXTRACT] Annotated size: ${Math.round(annotated.length / 1024)}KB`);
     if (annotated !== rawAnnotated) {
       console.log(`[PRE-EXTRACT] Normalized stray boundary marker variants to canonical form`);
     }
 
-    const startCount = (annotated.match(new RegExp(cfg.startMarker, 'g')) || []).length;
-    const endCount = (annotated.match(new RegExp(cfg.endMarker, 'g')) || []).length;
+    const countMarker = (marker) =>
+      (annotated.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+
+    const startCount = countMarker(cfg.startMarker);
+    const endCount = countMarker(cfg.endMarker);
     console.log(`[PRE-EXTRACT] Marker counts (${cfg.label}) — start: ${startCount}, end: ${endCount}`);
+    if (startCount !== endCount) {
+      console.warn(`[PRE-EXTRACT] ⚠️ Unbalanced ${cfg.label} markers: ${startCount} start vs ${endCount} end`);
+    }
+
+    let extraTotal = 0;
+    for (const [name, startMarker, endMarker] of cfg.extraMarkerCounts || []) {
+      const starts = countMarker(startMarker);
+      const ends = countMarker(endMarker);
+      extraTotal += starts;
+      console.log(`[PRE-EXTRACT] Marker counts (${name}) — start: ${starts}, end: ${ends}`);
+      if (starts !== ends) {
+        console.warn(`[PRE-EXTRACT] ⚠️ Unbalanced ${name} markers: ${starts} start vs ${ends} end`);
+      }
+    }
+
+    // An annotator that returns the document unchanged has failed, even though
+    // the HTTP call succeeded. Storing that output would leave the item looking
+    // pre-extracted while the extraction step reports "run pre-extraction
+    // first" — so fail here, where the real cause is visible.
+    if (startCount === 0 && extraTotal === 0) {
+      const unchanged = annotated.trim() === item.latex_doc.trim();
+      throw new Error(
+        `Annotation produced no ${cfg.label} markers` +
+        (unchanged ? ' and returned the document unchanged' : '') +
+        `. The provider ignored the annotation instruction — this happens with LlamaParse on large documents ` +
+        `(this one is ${Math.round(item.latex_doc.length / 1024)}KB). Retry with the Gemini provider.`
+      );
+    }
 
     const { data: updated, error: updateError } = await supabase
       .from('scanned_items')
@@ -261,6 +518,102 @@ export const preExtractionService = {
 
     if (error) throw error;
     return data;
+  },
+
+  /**
+   * Annotate with Gemini, chunk by chunk.
+   *
+   * Used instead of LlamaParse when the document is large or the annotation is
+   * structural: LlamaParse's parsing_instruction degrades to pass-through on
+   * long input (observed returning a 48KB chapter byte-for-byte unchanged).
+   */
+  async annotateWithGemini(content, instructions, label = 'annotation', splitPatterns = 'chapter') {
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured. Set GOOGLE_API_KEY in environment variables.');
+    }
+
+    const patterns = ANNOTATION_SPLIT_PATTERNS[splitPatterns] || ANNOTATION_SPLIT_PATTERNS.chapter;
+    const chunks = splitForAnnotation(content, { patterns });
+    console.log(`[PRE-EXTRACT] Gemini ${label}: ${chunks.length} chunk(s) from ${Math.round(content.length / 1024)}KB`);
+
+    const annotatedChunks = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const { text, headingHint } = chunks[i];
+      const hint = headingHint
+        ? `\n${patterns.hintLabel} AT THE START OF THIS EXCERPT (use it for any block that appears before the first heading below): ${headingHint}\n`
+        : '';
+
+      const prompt = `${instructions}\n${hint}
+This is excerpt ${i + 1} of ${chunks.length} from the document. Annotate ONLY this excerpt and return it in full.
+
+CONTENT TO ANNOTATE:
+${text}`;
+
+      const response = await fetch(
+        `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0,
+              maxOutputTokens: ANNOTATION_MAX_OUTPUT_TOKENS,
+              // Inserting markers needs no deliberation, and on 2.5 models
+              // thinking draws from the same output budget that has to carry the
+              // echoed document.
+              thinkingConfig: { thinkingBudget: 0 },
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini annotation failed on chunk ${i + 1}/${chunks.length}: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      const candidate = result.candidates?.[0];
+      const generated = candidate?.content?.parts?.[0]?.text;
+
+      if (!generated) {
+        throw new Error(
+          `Gemini returned no text for chunk ${i + 1}/${chunks.length}` +
+          (candidate?.finishReason ? ` (finishReason: ${candidate.finishReason})` : '')
+        );
+      }
+
+      // A truncated response silently drops the tail of the chapter, so surface
+      // it rather than storing a partial annotation.
+      if (candidate.finishReason === 'MAX_TOKENS') {
+        throw new Error(
+          `Gemini hit the output limit on chunk ${i + 1}/${chunks.length} (${Math.round(text.length / 1024)}KB input). ` +
+          `The annotation would be truncated.`
+        );
+      }
+
+      // Strip a code fence if the model wrapped its output despite instructions.
+      let cleaned = generated.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
+      }
+
+      const ratio = cleaned.length / text.length;
+      console.log(
+        `[PRE-EXTRACT] Chunk ${i + 1}/${chunks.length}: ${text.length} chars in, ${cleaned.length} out (${ratio.toFixed(2)}x)`
+      );
+      if (ratio < 0.9) {
+        console.warn(
+          `[PRE-EXTRACT] ⚠️ Chunk ${i + 1} shrank to ${(ratio * 100).toFixed(0)}% of its input — content may have been dropped`
+        );
+      }
+
+      annotatedChunks.push(cleaned);
+    }
+
+    return annotatedChunks.join('\n\n');
   },
 
   async submitToLlamaParse(content, instructions = PRE_EXTRACTION_INSTRUCTIONS) {

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { X, Loader2, AlertCircle, CheckCircle, RefreshCw, Edit2, Eye, Code } from 'lucide-react';
 import QuestionText from './QuestionText';
+import { buildSolutionLookup } from '../lib/solutionMatching';
 
 // Read-only render for one merged lesson item: question + answer/worked/explanation/visual.
 function ItemPreviewCard({ row, idx }) {
@@ -13,6 +14,9 @@ function ItemPreviewCard({ row, idx }) {
       }`}
     >
       <div className="flex items-center gap-2 mb-2">
+        {row.block_name && (
+          <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">{row.block_name}</span>
+        )}
         <span className="text-sm font-bold text-gray-700">Q{row.question_label || idx + 1}</span>
         {row.matched ? (
           <span className="text-xs px-2 py-0.5 bg-green-100 text-green-800 rounded">auto-matched</span>
@@ -126,23 +130,23 @@ export default function MergeSolutionModal({ isOpen, onClose, lesson }) {
   const initialRows = useMemo(() => {
     if (!selectedSolutionSetId) return [];
     const lessonItems = lesson?.lesson_items || [];
-    const solutions = solutionSetDetail?.data?.solutions?.solutions || [];
-    const map = new Map();
-    for (const s of solutions) {
-      if (s.question_label !== undefined && s.question_label !== null) {
-        map.set(String(s.question_label), s);
-      }
-    }
+    // Academic Book solutions are keyed on (block, label) — see solutionMatching.
+    const lookup = buildSolutionLookup(solutionSetDetail?.data?.solutions);
     return lessonItems.map((li) => {
       const label =
         li.question_label !== null && li.question_label !== undefined
           ? String(li.question_label)
           : null;
-      const matched = label ? map.get(label) : null;
       const j = li.question_solution_item_json || {};
+      const matched = lookup({
+        question_label: j.question_label ?? label,
+        block_type: j.block_type,
+        block_index: j.block_index,
+      });
       return {
         item_id: li.id,
         question_label: label || j.question_label || '',
+        block_name: j.block_name || null,
         text: j.text || '',
         choices: j.choices || [],
         matched: !!matched,
@@ -292,9 +296,11 @@ export default function MergeSolutionModal({ isOpen, onClose, lesson }) {
             ))}
           </select>
           <p className="mt-2 text-xs text-gray-500">
-            Each lesson item is matched by <code>question_label</code>. Review the
-            preview, click <span className="font-medium">Edit</span> to tweak the
-            JSON, then click <span className="font-medium">Sync</span> to save.
+            Question Bank items are matched by <code>question_label</code>; Academic Book
+            items by their block plus that label, so the same number in two exercises
+            cannot cross over. Review the preview, click{' '}
+            <span className="font-medium">Edit</span> to tweak the JSON, then click{' '}
+            <span className="font-medium">Sync</span> to save.
           </p>
         </div>
 

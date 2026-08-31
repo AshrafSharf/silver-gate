@@ -214,9 +214,28 @@ router.put('/:id', asyncHandler(async (req, res) => {
   res.json({ success: true, data: item });
 }));
 
-// Pre-extract: annotate latex_doc with question boundary markers via LlamaParse.
+// Pre-extract: annotate latex_doc with boundary markers via LlamaParse.
+// source_type selects the annotator: 'Question Bank' wraps each question in
+// <<<Q_START>>>/<<<Q_END>>>; 'Academic Book' marks example/exercise blocks and
+// the topic each belongs to. Solution items always use the solution annotator.
 router.post('/:id/pre-extract', asyncHandler(async (req, res) => {
-  const item = await preExtractionService.annotate(req.params.id);
+  const sourceType = req.body?.source_type || 'Question Bank';
+  const validTypes = ['Question Bank', 'Academic Book'];
+  if (!validTypes.includes(sourceType)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid source_type. Must be one of: ${validTypes.join(', ')}`,
+    });
+  }
+  const provider = req.body?.provider || null;
+  const validProviders = ['llamaparse', 'gemini'];
+  if (provider && !validProviders.includes(provider)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid provider. Must be one of: ${validProviders.join(', ')}`,
+    });
+  }
+  const item = await preExtractionService.annotate(req.params.id, { sourceType, provider });
   res.json({ success: true, data: item });
 }));
 

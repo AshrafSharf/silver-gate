@@ -35,6 +35,15 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
   if (!isOpen || !solutionSet) return null;
 
   const solutions = solutionSet.solutions?.solutions || [];
+  // Academic Book extractions store solutions grouped into blocks (one per
+  // exercise, one per example) instead of a flat list.
+  const blocks = Array.isArray(solutionSet.solutions?.blocks)
+    ? solutionSet.solutions.blocks
+    : null;
+  const parseWarnings = solutionSet.solutions?.parse_warnings || [];
+  const blockSolutionCount = blocks
+    ? blocks.reduce((n, b) => n + (b.solutions?.length || 0), 0)
+    : 0;
 
   const handleStartEdit = () => {
     setDraftJson(JSON.stringify(solutionSet.solutions ?? { solutions: [] }, null, 2));
@@ -58,8 +67,12 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
       setParseError(e.message);
       return;
     }
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.solutions)) {
-      setParseError('JSON must have a "solutions" array property');
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      (!Array.isArray(parsed.solutions) && !Array.isArray(parsed.blocks))
+    ) {
+      setParseError('JSON must have a "solutions" array (question bank) or a "blocks" array (academic book)');
       return;
     }
     setParseError(null);
@@ -84,7 +97,11 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
                   </>
                 )}
                 <span>-</span>
-                <span>{solutions.length} solutions</span>
+                <span>
+                  {blocks
+                    ? `${blocks.length} blocks - ${blockSolutionCount} solutions`
+                    : `${solutions.length} solutions`}
+                </span>
               </div>
             </div>
           </div>
@@ -218,6 +235,86 @@ export default function SolutionSetModal({ isOpen, onClose, solutionSet }) {
               <pre className="text-sm text-gray-100 font-mono whitespace-pre-wrap break-words">
                 {JSON.stringify(solutionSet.solutions, null, 2)}
               </pre>
+            </div>
+          ) : blocks ? (
+            /* Academic Book: one card per exercise / example solution group */
+            <div className="space-y-4">
+              {parseWarnings.length > 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium mb-1">
+                      {parseWarnings.length} annotation {parseWarnings.length === 1 ? 'warning' : 'warnings'}
+                    </p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {parseWarnings.map((warning, i) => (
+                        <li key={i}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {blocks.map((block, blockIndex) => (
+                <div key={blockIndex} className="bg-white rounded-lg border shadow-sm">
+                  <div className="flex items-start justify-between gap-3 p-3 border-b bg-gray-50 rounded-t-lg">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          block.type === 'EXAMPLE'
+                            ? 'bg-purple-100 text-purple-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}
+                      >
+                        {block.type}
+                      </span>
+                      <span className="font-semibold text-gray-800">{block.name}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 flex-shrink-0">
+                      {block.solutions?.length || 0} solutions
+                    </span>
+                  </div>
+
+                  <div className="p-3 space-y-3">
+                    {(block.solutions || []).map((solution, index) => (
+                      <ErrorBoundary
+                        key={index}
+                        message={`Failed to render solution ${solution.question_label || index + 1}. View the raw JSON to inspect it.`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="flex-shrink-0 w-9 h-9 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center text-sm font-bold">
+                            {solution.question_label || index + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            {solution.answer_key && (
+                              <span className="inline-flex items-center justify-center px-2 py-0.5 mb-2 bg-green-100 text-green-700 rounded text-xs font-bold">
+                                {solution.answer_key}
+                              </span>
+                            )}
+                            {solution.worked_solution && (
+                              <div className="pl-3 border-l-2 border-purple-200">
+                                <QuestionText text={solution.worked_solution} className="whitespace-pre-wrap text-sm" />
+                              </div>
+                            )}
+                            {(solution.sub_solutions || []).length > 0 && (
+                              <div className="mt-2 space-y-1.5 pl-3">
+                                {solution.sub_solutions.map((sub, subIndex) => (
+                                  <div key={subIndex} className="flex items-start gap-2">
+                                    <span className="text-xs font-semibold text-gray-500 mt-0.5 flex-shrink-0">
+                                      {sub.question_label}
+                                    </span>
+                                    <QuestionText text={sub.worked_solution} className="whitespace-pre-wrap text-sm" />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </ErrorBoundary>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : solutions.length > 0 ? (
             <div className="space-y-4">

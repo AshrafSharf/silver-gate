@@ -33,6 +33,11 @@ export default function ScannedItemsPage() {
   const [latexViewMode, setLatexViewMode] = useState('latex'); // 'latex' | 'pre_extracted'
   const [preExtractedEditing, setPreExtractedEditing] = useState(false);
   const [preExtractedDraft, setPreExtractedDraft] = useState('');
+  // Item awaiting a source-type choice before pre-extraction runs.
+  const [preExtractItem, setPreExtractItem] = useState(null);
+  const [preExtractSourceType, setPreExtractSourceType] = useState('Question Bank');
+  // '' means let the backend pick: Gemini for Academic Book, LlamaParse otherwise.
+  const [preExtractProvider, setPreExtractProvider] = useState('');
 
   // Edit modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -163,9 +168,13 @@ export default function ScannedItemsPage() {
     },
   });
 
-  // Pre-extract: annotate latex_doc with boundary markers (Q_* for questions, S_* for solutions) via LlamaParse.
+  // Pre-extract: annotate latex_doc with boundary markers.
+  // Question Bank items get flat Q_* / S_* markers; Academic Book items get
+  // block markers instead — example/exercise blocks for questions, and
+  // per-exercise solution groups for solutions.
   const preExtractMutation = useMutation({
-    mutationFn: (id) => api.post(`/scanned-items/${id}/pre-extract`),
+    mutationFn: ({ id, sourceType, provider }) =>
+      api.post(`/scanned-items/${id}/pre-extract`, { source_type: sourceType, provider }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scannedItems'] });
     },
@@ -196,7 +205,19 @@ export default function ScannedItemsPage() {
         return;
       }
     }
-    preExtractMutation.mutate(item.id);
+    setPreExtractItem(item);
+    setPreExtractSourceType('Question Bank');
+    setPreExtractProvider('');
+  };
+
+  const handleConfirmPreExtract = () => {
+    if (!preExtractItem) return;
+    preExtractMutation.mutate({
+      id: preExtractItem.id,
+      sourceType: preExtractSourceType,
+      provider: preExtractProvider || null,
+    });
+    setPreExtractItem(null);
   };
 
 
@@ -827,7 +848,7 @@ export default function ScannedItemsPage() {
                         </button>
                         <button
                           onClick={() => handlePreExtract(item)}
-                          disabled={item.latex_conversion_status !== 'completed' || (preExtractMutation.isPending && preExtractMutation.variables === item.id)}
+                          disabled={item.latex_conversion_status !== 'completed' || (preExtractMutation.isPending && preExtractMutation.variables?.id === item.id)}
                           className={`${item.latex_conversion_status !== 'completed' ? 'text-gray-300 cursor-not-allowed' : item.pre_extracted_present ? 'text-amber-500 hover:text-amber-700' : 'text-indigo-500 hover:text-indigo-700'} disabled:opacity-50`}
                           title={
                             item.latex_conversion_status !== 'completed'
@@ -1163,6 +1184,102 @@ export default function ScannedItemsPage() {
                 }`}
               >
                 {updateItemMutation.isPending ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-extraction Source Type Modal */}
+      {preExtractItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b bg-indigo-50">
+              <h2 className="text-lg font-semibold text-indigo-800">Pre-extract</h2>
+              <button
+                onClick={() => setPreExtractItem(null)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-gray-600 break-all">
+                <span className="font-medium">Item:</span> {preExtractItem.item_data}
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Source Type
+                </label>
+                <select
+                  value={preExtractSourceType}
+                  onChange={(e) => {
+                    setPreExtractSourceType(e.target.value);
+                    // LlamaParse is unsupported for academic books; fall back to Auto.
+                    if (e.target.value === 'Academic Book' && preExtractProvider === 'llamaparse') {
+                      setPreExtractProvider('');
+                    }
+                  }}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="Question Bank">Question Bank</option>
+                  <option value="Academic Book">Academic Book</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {preExtractSourceType === 'Academic Book'
+                    ? preExtractItem.item_type === 'solution'
+                      ? 'Groups solutions under the exercise they answer, so each one can be matched back to its question.'
+                      : 'Marks example and exercise blocks and the topic each belongs to, so one lesson can be created per block.'
+                    : preExtractItem.item_type === 'solution'
+                      ? 'Wraps each solution in boundary markers to produce a flat solution list.'
+                      : 'Wraps each question in boundary markers to produce a flat question list.'}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Annotation Provider
+                </label>
+                <select
+                  value={preExtractProvider}
+                  onChange={(e) => setPreExtractProvider(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">
+                    Auto ({preExtractSourceType === 'Academic Book' ? 'Gemini' : 'LlamaParse'})
+                  </option>
+                  <option value="gemini">Gemini AI</option>
+                  <option value="llamaparse" disabled={preExtractSourceType === 'Academic Book'}>
+                    LlamaParse{preExtractSourceType === 'Academic Book' ? ' (not supported)' : ''}
+                  </option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {preExtractSourceType === 'Academic Book'
+                    ? 'Academic books require Gemini — LlamaParse returns large documents unannotated.'
+                    : 'LlamaParse is the default for question banks.'}
+                </p>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                Use the same source type when you run{' '}
+                {preExtractItem.item_type === 'solution' ? 'Extract Solutions' : 'Extract Questions'} on this item.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 p-4 border-t">
+              <button
+                onClick={() => setPreExtractItem(null)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmPreExtract}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                Run Pre-extraction
               </button>
             </div>
           </div>

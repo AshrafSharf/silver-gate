@@ -1,6 +1,8 @@
 import { supabase } from '../config/database.js';
 import { config } from '../config/index.js';
 import { S_START_MARKER, S_END_MARKER, normalizeMarkers } from './preExtraction.service.js';
+import { hasAcademicBookSolutionMarkers } from './academicBookSolution.instructions.js';
+import { parseAcademicBookSolutionBlocks, countSolutions } from './academicBookSolution.parser.js';
 
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
@@ -535,7 +537,49 @@ export const solutionExtractionService = {
       const sourceType = solutionSet.source_type || 'Question Bank';
       let parsedSolutions;
 
-      if (hasMarkers) {
+      // Academic books carry block structure (which exercise each solution
+      // answers), so they get their own deterministic parser and produce
+      // { blocks: [...] } rather than a flat { solutions: [...] }.
+      const academicMarkers = hasAcademicBookSolutionMarkers(combinedContent);
+
+      if (sourceType === 'Academic Book' && academicMarkers) {
+        console.log(`[SOLUTION_EXTRACT] Academic Book markers detected — using block parser (LLM bypassed)`);
+        const { blocks, warnings } = parseAcademicBookSolutionBlocks(combinedContent);
+
+        for (const warning of warnings) {
+          console.warn(`[SOLUTION_EXTRACT] ⚠️ ${warning}`);
+        }
+
+        const subTotal = blocks.reduce(
+          (n, b) => n + b.solutions.reduce((m, s) => m + (s.sub_solutions?.length || 0), 0),
+          0
+        );
+        console.log(
+          `[SOLUTION_EXTRACT] Parsed ${blocks.length} blocks ` +
+          `(${blocks.filter((b) => b.type === 'EXERCISE').length} exercise, ` +
+          `${blocks.filter((b) => b.type === 'EXAMPLE').length} example), ` +
+          `${countSolutions({ blocks })} solutions, ${subTotal} sub-parts`
+        );
+
+        parsedSolutions = { blocks, parse_warnings: warnings };
+      } else if (sourceType === 'Academic Book' && !academicMarkers) {
+        // Falling through to the flat path would produce bare labels like "4",
+        // which collide across the six exercises in a chapter and cannot be
+        // matched back to a question. Name the actual cause instead.
+        let cause;
+        if (hasMarkers) {
+          cause =
+            'The selected items were pre-extracted in "Question Bank" mode (they carry ' +
+            `${S_START_MARKER} markers, not exercise/example solution block markers). Re-run ` +
+            'pre-extraction with source type "Academic Book".';
+        } else {
+          cause =
+            'The selected items have no solution block markers. Run pre-extraction with source ' +
+            'type "Academic Book" — and if it reports no markers were produced, retry it with ' +
+            'the Gemini provider.';
+        }
+        throw new Error(`Academic Book solution extraction requires block markers. ${cause}`);
+      } else if (hasMarkers) {
         // Marker mode: block boundaries are explicit and parsing is mechanical.
         // The LLM was unreliable here (logs showed it returning 5 entries for
         // 10 markers by collapsing multi-step proof solutions), so bypass it
@@ -583,14 +627,24 @@ export const solutionExtractionService = {
         }
       }
 
-      // Extract visual paths (image URLs) from original LaTeX content - ONLY extracts URLs, does not modify content
-      const visualPathSolutions = this.extractVisualPaths(parsedSolutions, combinedContent);
-      console.log(`[SOLUTION_EXTRACT] After visual path extraction, solutions count: ${visualPathSolutions.solutions?.length || 0}`);
+      let solutions;
+      if (Array.isArray(parsedSolutions.blocks)) {
+        // The block parser already read image URLs and preserved the LaTeX as
+        // printed; the flat post-processing below hunts for "<n>. (X)" headers
+        // that a textbook solutions guide does not have.
+        solutions = parsedSolutions;
+      } else {
+        // Extract visual paths (image URLs) from original LaTeX content - ONLY extracts URLs, does not modify content
+        const visualPathSolutions = this.extractVisualPaths(parsedSolutions, combinedContent);
+        console.log(`[SOLUTION_EXTRACT] After visual path extraction, solutions count: ${visualPathSolutions.solutions?.length || 0}`);
 
-      // Format LaTeX blocks for ALL solutions (ensures proper rendering)
-      const solutions = this.formatAllSolutionsLatex(visualPathSolutions);
+        // Format LaTeX blocks for ALL solutions (ensures proper rendering)
+        solutions = this.formatAllSolutionsLatex(visualPathSolutions);
+        console.log(`[SOLUTION_EXTRACT] After LaTeX formatting, solutions count: ${solutions.solutions?.length || 0}`);
+      }
+
       const solutionsJson = JSON.stringify(solutions);
-      console.log(`[SOLUTION_EXTRACT] After LaTeX formatting, solutions count: ${solutions.solutions?.length || 0}`);
+      const totalSolutions = countSolutions(solutions);
       console.log(`[SOLUTION_EXTRACT] Solutions JSON size: ${Math.round(solutionsJson.length / 1024)}KB`);
 
       // Update solution set with results
@@ -598,7 +652,7 @@ export const solutionExtractionService = {
         .from('solution_sets')
         .update({
           solutions: solutions,
-          total_solutions: solutions.solutions?.length || 0,
+          total_solutions: totalSolutions,
           status: 'completed',
           error_message: null,
         })
@@ -610,7 +664,7 @@ export const solutionExtractionService = {
 
       if (data) {
         console.log(`[SOLUTION_EXTRACT] Solution Set ID: ${data.id}`);
-        console.log(`[SOLUTION_EXTRACT] Saved to DB. Returned solutions count: ${data.solutions?.solutions?.length || 0}`);
+        console.log(`[SOLUTION_EXTRACT] Saved to DB. Returned solutions count: ${countSolutions(data.solutions)}`);
         console.log(`[SOLUTION_EXTRACT] total_solutions field: ${data.total_solutions}`);
       }
 
@@ -622,7 +676,7 @@ export const solutionExtractionService = {
         .single();
 
       if (verifyData) {
-        console.log(`[SOLUTION_EXTRACT] VERIFY - Re-fetched solutions count: ${verifyData.solutions?.solutions?.length || 0}`);
+        console.log(`[SOLUTION_EXTRACT] VERIFY - Re-fetched solutions count: ${countSolutions(verifyData.solutions)}`);
       }
 
       return data;
@@ -1686,18 +1740,21 @@ IMPORTANT: Return ONLY the JSON object with the "solutions" array. Do not includ
     } else if (
       solutionsInput &&
       typeof solutionsInput === 'object' &&
-      Array.isArray(solutionsInput.solutions)
+      (Array.isArray(solutionsInput.solutions) || Array.isArray(solutionsInput.blocks))
     ) {
-      normalized = { ...solutionsInput, solutions: solutionsInput.solutions };
+      // Academic Book sends grouped blocks; Question Bank sends a flat list.
+      normalized = { ...solutionsInput };
     } else {
-      throw new Error('Invalid solutions format. Expected { solutions: [...] } or [...]');
+      throw new Error(
+        'Invalid solutions format. Expected { solutions: [...] }, { blocks: [...] } or [...]'
+      );
     }
 
     const { data, error } = await supabase
       .from('solution_sets')
       .update({
         solutions: normalized,
-        total_solutions: normalized.solutions.length,
+        total_solutions: countSolutions(normalized),
       })
       .eq('id', solutionSetId)
       .select(`

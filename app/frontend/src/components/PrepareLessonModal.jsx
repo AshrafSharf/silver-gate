@@ -334,7 +334,12 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
   const [lessonItemCount, setLessonItemCount] = useState('');
 
   // Manual pick mode state
-  const [splitMode, setSplitMode] = useState('auto'); // 'auto' | 'manual'
+  // 'block' is entered automatically for Academic Book sets — see blockConfigs.
+  const [splitMode, setSplitMode] = useState('auto'); // 'auto' | 'manual' | 'block'
+  // One entry per exercise / example block, prefilled from the extraction. The
+  // textbook already named and sectioned each block, so these start populated
+  // and the operator only corrects bad OCR headings.
+  const [blockConfigs, setBlockConfigs] = useState([]);
   const [pickGroups, setPickGroups] = useState([
     { selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }
   ]);
@@ -386,6 +391,7 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       setParentSectionName('');
       setLessonItemCount('');
       setSplitMode('auto');
+      setBlockConfigs([]);
       setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
       setActiveGroupIndex(0);
       setQuestionType('OTHER');
@@ -442,7 +448,7 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
   const prepareLessonMutation = useMutation({
     mutationFn: () => api.post('/lessons/prepare', {
       question_set_id: selectedQuestionSetId,
-      solution_set_id: selectedSolutionSetId,
+      solution_set_id: selectedSolutionSetId || null,
     }),
     onSuccess: (response) => {
       setPreparedData(response.data);
@@ -450,16 +456,57 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
       setEditingItemIndex(null);
       setPickGroups([{ selectedIndices: new Set(), lesson_name: '', question_type: 'OTHER', parent_section_name: '', common_parent_section_name: '' }]);
       setActiveGroupIndex(0);
+
+      // An Academic Book set arrives already grouped into blocks, each naming
+      // the lesson it becomes. Prefill from that instead of asking for a split.
+      const blocks = response.data.blocks;
+      if (blocks && blocks.length > 0) {
+        setBlockConfigs(
+          blocks.map((block) => ({
+            block_type: block.block_type,
+            block_index: block.block_index,
+            item_count: block.item_count,
+            // The number-free name ("EXERCISE"); the printed number is shown
+            // beside it as the block index and stored in its own field.
+            lesson_name: block.lesson_name || block.name || '',
+            parent_section_name: block.parent_section_name || '',
+            common_parent_section_name: block.common_parent_section_name || '',
+            question_type: block.question_type || 'OTHER',
+          }))
+        );
+        setSplitMode('block');
+      } else {
+        setBlockConfigs([]);
+        setSplitMode('auto');
+      }
     },
   });
 
   // Create lesson mutation
   const createLessonMutation = useMutation({
     mutationFn: async () => {
+      // Block mode: one request, one lesson per block. Items are not sent —
+      // the backend re-derives them per block from the question set so each
+      // lesson keeps its own block's questions.
+      if (splitMode === 'block') {
+        return api.post('/lessons', {
+          question_set_id: selectedQuestionSetId,
+          solution_set_id: selectedSolutionSetId || null,
+          block_configs: blockConfigs.map((block) => ({
+            block_type: block.block_type,
+            block_index: block.block_index,
+            lesson_name: block.lesson_name.trim(),
+            parent_section_name: block.parent_section_name.trim() || null,
+            common_parent_section_name: block.common_parent_section_name.trim() || null,
+            question_type: block.question_type,
+          })),
+        });
+      }
+
       if (splitMode === 'auto') {
         const payload = {
           question_set_id: selectedQuestionSetId,
-          solution_set_id: selectedSolutionSetId,
+          solution_set_id: selectedSolutionSetId || null,
           items: editedItems,
           question_type: questionType,
           name: lessonName.trim(),
@@ -482,7 +529,7 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
 
         const payload = {
           question_set_id: selectedQuestionSetId,
-          solution_set_id: selectedSolutionSetId,
+          solution_set_id: selectedSolutionSetId || null,
           items: pickedItems,
           question_type: group.question_type,
           name: group.lesson_name.trim(),
@@ -506,7 +553,9 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     ? [...solutionSets.data].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
     : [];
 
-  const canPrepareLesson = selectedQuestionSetId && selectedSolutionSetId;
+  // A solution set is optional — an Academic Book's worked examples carry their
+  // own working, and exercise solutions can be merged into the lesson later.
+  const canPrepareLesson = !!selectedQuestionSetId;
 
   // Multi-group computed values
   const activeGroupIndices = useMemo(
@@ -707,14 +756,26 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
     });
   }, []);
 
+  const handleBlockFieldChange = useCallback((blockIndex, field, value) => {
+    setBlockConfigs(prev => {
+      const updated = [...prev];
+      updated[blockIndex] = { ...updated[blockIndex], [field]: value };
+      return updated;
+    });
+  }, []);
+
   // Check if form is valid for submission
   const canCreateLesson = useMemo(() => {
+    if (splitMode === 'block') {
+      // Every block becomes a lesson, so every block needs a name.
+      return blockConfigs.length > 0 && blockConfigs.every(b => b.lesson_name.trim() !== '');
+    }
     if (splitMode === 'auto') {
       return lessonName.trim() !== '';
     }
     // Manual pick mode: every group must have a lesson name and at least one selected item
     return pickGroups.every(g => g.lesson_name.trim() !== '' && g.selectedIndices.size > 0);
-  }, [lessonName, splitMode, pickGroups]);
+  }, [lessonName, splitMode, pickGroups, blockConfigs]);
 
   if (!isOpen) return null;
 
@@ -741,6 +802,18 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                   <span className="text-green-600">{preparedData.summary?.matched} matched</span>
                   {preparedData.summary?.unmatched > 0 && (
                     <span className="text-orange-500">{preparedData.summary?.unmatched} unmatched</span>
+                  )}
+                  {/* A block matching zero solutions means that exercise was
+                      annotated wrongly — the headline total hides it. */}
+                  {preparedData.summary?.by_block?.some((b) => b.matched < b.total) && (
+                    <span className="text-orange-500">
+                      (
+                      {preparedData.summary.by_block
+                        .filter((b) => b.matched < b.total)
+                        .map((b) => `${b.name}: ${b.matched}/${b.total}`)
+                        .join(', ')}
+                      )
+                    </span>
                   )}
                 </div>
               </div>
@@ -787,7 +860,104 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
           {/* Footer - Create Lesson Form */}
           <div className="p-4 border-t bg-gray-50">
             <form onSubmit={handleCreateLesson} className="space-y-4">
+              {/* Block mode: the textbook already decided the split, so there is
+                  no split mode to choose — only names to confirm. */}
+              {splitMode === 'block' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">
+                      One lesson per block ({blockConfigs.length})
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      Names and sections come from the textbook — edit any that OCR got wrong.
+                    </span>
+                  </div>
+
+                  <div className="max-h-64 overflow-auto space-y-2 pr-1">
+                    {blockConfigs.map((block, index) => (
+                      <div
+                        key={`${block.block_type}|${block.block_index}`}
+                        className="bg-white border rounded-lg p-3 space-y-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 text-xs rounded ${
+                              block.block_type === 'EXAMPLE'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-blue-100 text-blue-700'
+                            }`}
+                          >
+                            {block.block_type}
+                          </span>
+                          <span className="text-sm font-medium text-gray-700">
+                            {block.lesson_name} {block.block_index}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {block.item_count} {block.item_count === 1 ? 'item' : 'items'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">
+                              Lesson Name * <span className="text-gray-400">(index "{block.block_index}" stored separately)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={block.lesson_name}
+                              onChange={(e) => handleBlockFieldChange(index, 'lesson_name', e.target.value)}
+                              className={`w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-green-500 ${
+                                block.lesson_name.trim() === '' ? 'border-red-300' : 'border-gray-300'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Question Type</label>
+                            <select
+                              value={block.question_type}
+                              onChange={(e) => handleBlockFieldChange(index, 'question_type', e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                            >
+                              <option value="OTHER">OTHER</option>
+                              <option value="CHOICE_BASED">CHOICE_BASED</option>
+                              <option value="MULTI_QUESTIONS">MULTI_QUESTIONS</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Parent Section</label>
+                            <input
+                              type="text"
+                              value={block.parent_section_name}
+                              onChange={(e) => handleBlockFieldChange(index, 'parent_section_name', e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Common Parent Section</label>
+                            <input
+                              type="text"
+                              value={block.common_parent_section_name}
+                              onChange={(e) => handleBlockFieldChange(index, 'common_parent_section_name', e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setSplitMode('auto')}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Ignore blocks and split manually instead
+                  </button>
+                </div>
+              )}
+
               {/* Mode Toggle */}
+              {splitMode !== 'block' && (
               <div className="flex items-center gap-6 py-2">
                 <span className="text-sm font-medium text-gray-700">Split Mode:</span>
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -812,7 +982,17 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                   />
                   <span className="text-sm text-gray-700">Manual Pick</span>
                 </label>
+                {blockConfigs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSplitMode('block')}
+                    className="text-sm text-green-700 hover:text-green-800 underline"
+                  >
+                    Back to one lesson per block
+                  </button>
+                )}
               </div>
+              )}
 
               {/* Auto Mode Fields */}
               {splitMode === 'auto' && (
@@ -1224,7 +1404,7 @@ export default function PrepareLessonModal({ isOpen, onClose }) {
                 onChange={(e) => setSelectedSolutionSetId(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 mb-4"
               >
-                <option value="">Select Solution Set</option>
+                <option value="">None — solutions can be merged in later</option>
                 {isLoadingSolutionSets ? (
                   <option disabled>Loading...</option>
                 ) : sortedSolutionSets.length === 0 ? (

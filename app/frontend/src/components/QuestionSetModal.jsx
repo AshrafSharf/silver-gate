@@ -34,6 +34,15 @@ export default function QuestionSetModal({ isOpen, onClose, questionSet }) {
   if (!isOpen || !questionSet) return null;
 
   const questions = questionSet.questions?.questions || [];
+  // Academic Book extractions store grouped blocks (one per exercise / example
+  // group) instead of a flat question list.
+  const blocks = Array.isArray(questionSet.questions?.blocks)
+    ? questionSet.questions.blocks
+    : null;
+  const parseWarnings = questionSet.questions?.parse_warnings || [];
+  const blockItemCount = blocks
+    ? blocks.reduce((n, b) => n + (b.toc_question_items?.length || 0), 0)
+    : 0;
 
   const handleStartEdit = () => {
     setDraftJson(JSON.stringify(questionSet.questions ?? { questions: [] }, null, 2));
@@ -57,8 +66,12 @@ export default function QuestionSetModal({ isOpen, onClose, questionSet }) {
       setParseError(e.message);
       return;
     }
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.questions)) {
-      setParseError('JSON must have a "questions" array property');
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      (!Array.isArray(parsed.questions) && !Array.isArray(parsed.blocks))
+    ) {
+      setParseError('JSON must have a "questions" array (question bank) or a "blocks" array (academic book)');
       return;
     }
     setParseError(null);
@@ -83,7 +96,11 @@ export default function QuestionSetModal({ isOpen, onClose, questionSet }) {
                   </>
                 )}
                 <span>-</span>
-                <span>{questions.length} questions</span>
+                <span>
+                  {blocks
+                    ? `${blocks.length} blocks - ${blockItemCount} questions`
+                    : `${questions.length} questions`}
+                </span>
               </div>
             </div>
           </div>
@@ -208,6 +225,121 @@ export default function QuestionSetModal({ isOpen, onClose, questionSet }) {
               <pre className="text-sm text-gray-100 font-mono whitespace-pre-wrap break-words">
                 {JSON.stringify(questionSet.questions, null, 2)}
               </pre>
+            </div>
+          ) : blocks ? (
+            /* Academic Book: one card per exercise / example group */
+            <div className="space-y-4">
+              {parseWarnings.length > 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium mb-1">
+                      {parseWarnings.length} annotation {parseWarnings.length === 1 ? 'warning' : 'warnings'}
+                    </p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {parseWarnings.map((warning, i) => (
+                        <li key={i}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {blocks.map((block, blockIndex) => (
+                <div key={blockIndex} className="bg-white rounded-lg border shadow-sm">
+                  <div className="flex items-start justify-between gap-3 p-3 border-b bg-gray-50 rounded-t-lg">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                            block.type === 'EXAMPLE'
+                              ? 'bg-purple-100 text-purple-700'
+                              : 'bg-blue-100 text-blue-700'
+                          }`}
+                        >
+                          {block.type}
+                        </span>
+                        <span className="font-semibold text-gray-800">
+                          {block.name} {block.index}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {block.toc_question_items?.length || 0} items
+                        </span>
+                        {block.question_type && block.question_type !== 'OTHER' && (
+                          <span className="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-700">
+                            {block.question_type}
+                          </span>
+                        )}
+                      </div>
+                      {block.common_parent_section_name && (
+                        <p className="text-xs text-gray-500 mt-1 truncate">
+                          {block.common_parent_section_name}
+                        </p>
+                      )}
+                    </div>
+                    {(block.start_page || block.end_page) && (
+                      <span className="text-xs text-gray-400 flex-shrink-0">
+                        p. {block.start_page}
+                        {block.end_page && block.end_page !== block.start_page ? `-${block.end_page}` : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="p-4 space-y-4">
+                    {block.choice_question_header_text && (
+                      <QuestionText
+                        text={block.choice_question_header_text}
+                        className="text-sm font-medium text-gray-700"
+                      />
+                    )}
+                    {(block.toc_question_items || []).map((item, itemIndex) => (
+                      <div key={itemIndex} className="flex items-start gap-3">
+                        <span className="flex-shrink-0 w-8 h-8 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center text-xs font-bold">
+                          {item.question_label || item.id}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <QuestionText text={item.question} className="whitespace-pre-wrap" />
+                          {item.solution && (
+                            <details className="mt-2">
+                              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                                Solution
+                              </summary>
+                              <QuestionText
+                                text={item.solution}
+                                className="mt-1 text-sm text-gray-600 whitespace-pre-wrap"
+                              />
+                            </details>
+                          )}
+                          {item.sub_questions?.length > 0 && (
+                            <div className="mt-2 space-y-1 pl-2 border-l-2 border-gray-200">
+                              {item.sub_questions.map((sub, subIndex) => (
+                                <div key={subIndex} className="flex gap-2 text-sm">
+                                  <span className="text-gray-400 flex-shrink-0">
+                                    {sub.question_label}
+                                  </span>
+                                  <QuestionText text={sub.question} className="text-gray-700" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {item.choices?.length > 0 && (
+                            <div className="mt-2 space-y-1 pl-2 border-l-2 border-blue-200">
+                              {item.choices.map((choice, choiceIndex) => (
+                                <div key={choiceIndex} className="flex gap-2 text-sm">
+                                  <span className="text-gray-400 flex-shrink-0">
+                                    {choice.question_label}
+                                  </span>
+                                  <QuestionText text={choice.question} className="text-gray-700" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : questions.length > 0 ? (
             <div className="space-y-4">

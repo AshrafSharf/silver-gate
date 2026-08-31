@@ -88,22 +88,49 @@ class LessonReverseSyncer extends BaseReverseSyncer {
       ? item.name.match(/^(Questions)\s+(\d+)\s*-\s*(\d+)\s*\.?\s*$/)
       : null;
     const name = rangeMatch ? rangeMatch[1] : item.name;
-    const index = rangeMatch ? `${rangeMatch[2]}-${rangeMatch[3]}` : item.question_range;
 
-    return {
+    // An Academic Book lesson is a textbook block and carries its own identity:
+    // the printed number ("1.1", "1 - 4"), its kind, and its position among
+    // blocks of that kind. Lesson creation stores that under `block` in the
+    // otherwise-unused question_solution_json column. A Question Bank lesson has
+    // no block, so it keeps the previous behaviour — question_range as the
+    // index, the chapter-wide display_order, and type EXAMPLE.
+    //
+    // Getting `type` from the block is not cosmetic: this collection is uniquely
+    // keyed on (order, chapter, type) and `batchUpsert` deletes rows that
+    // collide on it. Writing every lesson as EXAMPLE made a chapter's exercises
+    // and examples contend for the same key.
+    const block = item.question_solution_json?.block || null;
+
+    const index = rangeMatch
+      ? `${rangeMatch[2]}-${rangeMatch[3]}`
+      : block?.index || item.question_range;
+
+    const document = {
       _id: toObjectId(item.ref_id),
       name,
       index,
-      order: item.display_order,
+      order: block?.order ?? item.display_order,
       common_parent_section_name: item.common_parent_section_name,
       parent_section_name: item.parent_section_name,
       toc_output_json: item.toc_output_json,
       toc_status: 'COMPLETED',
       toc_prompt: item.name,
-      type: 'EXAMPLE',
+      type: block?.type || 'EXAMPLE',
       book: bookRefId ? toDBRef('book', bookRefId) : null,
       chapter: chapterRefId ? toDBRef('chapter', chapterRefId) : null,
     };
+
+    // Page numbers are optional in the annotation, so only send them when the
+    // source actually recorded them rather than writing nulls over the field.
+    if (block?.start_page !== null && block?.start_page !== undefined) {
+      document.start_page = block.start_page;
+    }
+    if (block?.end_page !== null && block?.end_page !== undefined) {
+      document.end_page = block.end_page;
+    }
+
+    return document;
   }
 
   /**

@@ -1,6 +1,8 @@
 import { supabase } from '../config/database.js';
 import { config } from '../config/index.js';
 import { Q_START_MARKER, Q_END_MARKER } from './preExtraction.service.js';
+import { hasAcademicBookMarkers } from './academicBook.instructions.js';
+import { parseAcademicBookBlocks } from './academicBook.parser.js';
 
 const LLAMAPARSE_API_URL = config.llamaParse.apiUrl;
 const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
@@ -9,6 +11,22 @@ const LLAMAPARSE_API_KEY = config.llamaParse.apiKey;
 const GEMINI_API_URL = config.gemini.apiUrl;
 const GEMINI_API_KEY = config.gemini.apiKey;
 const GEMINI_MODEL = config.gemini.model;
+
+/**
+ * Headline question count for either payload shape.
+ * Question Bank stores a flat `{ questions: [...] }`; Academic Book stores
+ * `{ blocks: [...] }` whose items live under each block's `toc_question_items`.
+ */
+export function countQuestions(payload) {
+  if (!payload || typeof payload !== 'object') return 0;
+  if (Array.isArray(payload.blocks)) {
+    return payload.blocks.reduce(
+      (n, block) => n + (Array.isArray(block?.toc_question_items) ? block.toc_question_items.length : 0),
+      0
+    );
+  }
+  return Array.isArray(payload.questions) ? payload.questions.length : 0;
+}
 
 // Extraction provider options
 export const EXTRACTION_PROVIDERS = {
@@ -352,7 +370,47 @@ export const questionExtractionService = {
       const sourceType = questionSet.source_type || 'Question Bank';
       let questions;
 
-      if (hasMarkers) {
+      // Academic books carry block structure (exercise / example groups plus the
+      // topic each belongs to), so they get their own deterministic parser and
+      // produce { blocks: [...] } rather than a flat { questions: [...] }.
+      const academicMarkers = hasAcademicBookMarkers(combinedContent);
+
+      if (sourceType === 'Academic Book' && academicMarkers) {
+        console.log(`[EXTRACT] Academic Book markers detected — using block parser (LLM bypassed)`);
+        const { blocks, warnings } = parseAcademicBookBlocks(combinedContent);
+
+        for (const warning of warnings) {
+          console.warn(`[EXTRACT] ⚠️ ${warning}`);
+        }
+
+        const totalItems = blocks.reduce((n, b) => n + b.toc_question_items.length, 0);
+        console.log(
+          `[EXTRACT] Parsed ${blocks.length} blocks ` +
+          `(${blocks.filter((b) => b.type === 'EXERCISE').length} exercise, ` +
+          `${blocks.filter((b) => b.type === 'EXAMPLE').length} example groups), ` +
+          `${totalItems} items total`
+        );
+
+        questions = { blocks, parse_warnings: warnings };
+      } else if (sourceType === 'Academic Book' && !academicMarkers) {
+        // Falling through to the flat path would silently discard the grouping
+        // the operator expects from an Academic Book extraction.
+        // Name the actual cause: no annotation at all, an annotation done in
+        // Question Bank mode, or an annotation that came back without markers.
+        let cause;
+        if (hasMarkers) {
+          cause =
+            'The selected items were pre-extracted in "Question Bank" mode (they carry ' +
+            `${Q_START_MARKER} markers, not example/exercise block markers). Re-run pre-extraction ` +
+            'with source type "Academic Book".';
+        } else {
+          cause =
+            'The selected items have no block markers. Run pre-extraction with source type ' +
+            '"Academic Book" — and if it reports no markers were produced, retry it with the ' +
+            'Gemini provider.';
+        }
+        throw new Error(`Academic Book extraction requires block markers. ${cause}`);
+      } else if (hasMarkers) {
         // Marker mode: block boundaries are explicit and parsing is mechanical.
         // The LLM was unreliable on multi-block input (mirroring the solution
         // extraction bug where it returned 5 entries for 10 markers), so bypass
@@ -391,7 +449,8 @@ export const questionExtractionService = {
       }
 
       const questionsJson = JSON.stringify(questions);
-      console.log(`[EXTRACT] Parsed questions count: ${questions.questions?.length || 0}`);
+      const totalQuestions = countQuestions(questions);
+      console.log(`[EXTRACT] Parsed questions count: ${totalQuestions}`);
       console.log(`[EXTRACT] Questions JSON size: ${Math.round(questionsJson.length / 1024)}KB`);
 
       if (hasMarkers) {
@@ -409,7 +468,7 @@ export const questionExtractionService = {
         .from('question_sets')
         .update({
           questions: questions,
-          total_questions: questions.questions?.length || 0,
+          total_questions: totalQuestions,
           status: 'completed',
           error_message: null,
         })
@@ -421,7 +480,7 @@ export const questionExtractionService = {
 
       if (data) {
         console.log(`[EXTRACT] Question Set ID: ${data.id}`);
-        console.log(`[EXTRACT] Saved to DB. Returned questions count: ${data.questions?.questions?.length || 0}`);
+        console.log(`[EXTRACT] Saved to DB. Returned questions count: ${countQuestions(data.questions)}`);
         console.log(`[EXTRACT] total_questions field: ${data.total_questions}`);
       }
 
@@ -433,7 +492,7 @@ export const questionExtractionService = {
         .single();
 
       if (verifyData) {
-        console.log(`[EXTRACT] VERIFY - Re-fetched questions count: ${verifyData.questions?.questions?.length || 0}`);
+        console.log(`[EXTRACT] VERIFY - Re-fetched questions count: ${countQuestions(verifyData.questions)}`);
       }
 
       return data;
@@ -1273,18 +1332,23 @@ IMPORTANT: Return ONLY the JSON object with the "questions" array. Do not includ
     } else if (
       questionsInput &&
       typeof questionsInput === 'object' &&
-      Array.isArray(questionsInput.questions)
+      (Array.isArray(questionsInput.questions) || Array.isArray(questionsInput.blocks))
     ) {
-      normalized = { ...questionsInput, questions: questionsInput.questions };
+      // Academic Book sends grouped blocks; Question Bank sends a flat list.
+      normalized = { ...questionsInput };
     } else {
-      throw new Error('Invalid questions format. Expected { questions: [...] } or [...]');
+      throw new Error(
+        'Invalid questions format. Expected { questions: [...] }, { blocks: [...] } or [...]'
+      );
     }
+
+    const count = countQuestions(normalized);
 
     const { data, error } = await supabase
       .from('question_sets')
       .update({
         questions: normalized,
-        total_questions: normalized.questions.length,
+        total_questions: count,
       })
       .eq('id', questionSetId)
       .select(`
