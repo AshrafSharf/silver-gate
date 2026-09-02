@@ -168,7 +168,7 @@ export function parseAcademicBookSolutionBlocks(content) {
     ABS_MARKERS.EXERCISE_START,
     ABS_MARKERS.EXERCISE_END,
     warnings
-  ).map((body, position) => {
+  ).map(({ body }, position) => {
     const identity = readBlockIdentity(body, position, 'EXERCISE');
     const solutions = parseBlockSolutions(body, warnings, identity.name);
 
@@ -190,7 +190,7 @@ export function parseAcademicBookSolutionBlocks(content) {
     ABS_MARKERS.EXAMPLE_START,
     ABS_MARKERS.EXAMPLE_END,
     warnings
-  ).map((body, position) => {
+  ).map(({ body }, position) => {
     const identity = readBlockIdentity(body, position, 'Example');
 
     // An example solution is one unit, so the block body itself is the working

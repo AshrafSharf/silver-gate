@@ -391,6 +391,20 @@ export const questionExtractionService = {
           `${totalItems} items total`
         );
 
+        // A total on its own says only THAT the chapter is short. Naming every
+        // block says WHICH one is — a missing exercise, an example group split
+        // in two by a wobbling sub-topic title, a block with no items — which is
+        // otherwise only visible by diffing against the book by hand.
+        for (const block of blocks) {
+          const solutions = block.toc_question_items.filter((item) => item.solution).length;
+          console.log(
+            `[EXTRACT]   ${String(block.order).padStart(2)}. ${block.type.padEnd(8)} ` +
+            `"${block.name}${block.index ? ` ${block.index}` : ''}" ` +
+            `items=${block.toc_question_items.length} solutions=${solutions} ` +
+            `common="${block.common_parent_section_name ?? ''}" parent="${block.parent_section_name ?? ''}"`
+          );
+        }
+
         questions = { blocks, parse_warnings: warnings };
       } else if (sourceType === 'Academic Book' && !academicMarkers) {
         // Falling through to the flat path would silently discard the grouping

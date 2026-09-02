@@ -33,6 +33,11 @@ const QUESTION_TYPES = {
  * Collect the body of every `start` … `end` marker pair, in source order.
  * Unmatched openers are reported and skipped rather than swallowing the rest
  * of the document.
+ *
+ * Each entry carries its `offset` in the source. Examples and exercises are
+ * collected in two separate passes, so without it their relative order is lost
+ * and the chapter comes out as "every example, then every exercise" instead of
+ * the reading order a book is taught in.
  */
 export function extractBlockBodies(content, start, end, warnings) {
   const bodies = [];
@@ -48,7 +53,7 @@ export function extractBlockBodies(content, start, end, warnings) {
       break;
     }
 
-    bodies.push(content.substring(startIdx + start.length, endIdx));
+    bodies.push({ body: content.substring(startIdx + start.length, endIdx), offset: startIdx });
     cursor = endIdx + end.length;
   }
 
@@ -389,6 +394,8 @@ function parseExerciseQuestions(body, warnings, blockLabel) {
     });
   });
 
+  warnOnQuestionNumberGaps(items, warnings, blockLabel);
+
   return {
     items,
     choiceHeaderText: choiceHeaders.length > 0 ? cleanQuestionText(choiceHeaders[0].content) : null,
@@ -398,6 +405,44 @@ function parseExerciseQuestions(body, warnings, blockLabel) {
         ? QUESTION_TYPES.MULTI_QUESTIONS
         : QUESTION_TYPES.OTHER,
   };
+}
+
+/**
+ * Report gaps and duplicates in an exercise's printed question numbers.
+ *
+ * The annotator marks questions, and a question it fails to mark simply is not
+ * there afterwards — the block parses cleanly and comes up short, which is
+ * invisible without this check. The usual cause is a question the OCR stranded
+ * between two `enumerate` environments: the list closes, one or two questions
+ * sit as loose lines, a new list reopens with `\setcounter{enumi}{n}`, and the
+ * loose ones are skipped.
+ */
+function warnOnQuestionNumberGaps(items, warnings, blockLabel) {
+  const numbers = items
+    .map((item) => parseInt(item.question_label, 10))
+    .filter((value) => Number.isFinite(value));
+  if (numbers.length === 0) return;
+
+  const seen = new Set(numbers);
+  const highest = Math.max(...numbers);
+
+  const missing = [];
+  for (let n = 1; n <= highest; n++) {
+    if (!seen.has(n)) missing.push(n);
+  }
+  if (missing.length > 0) {
+    warnings.push(
+      `${blockLabel}: question ${missing.join(', ')} not annotated — the printed numbers run to ` +
+      `${highest} but only ${numbers.length} question${numbers.length === 1 ? '' : 's'} carry markers. ` +
+      `Check for questions the OCR left outside \\begin{enumerate}.`
+    );
+  }
+  if (seen.size !== numbers.length) {
+    warnings.push(
+      `${blockLabel}: duplicate question number(s) — ${numbers.length} questions share ${seen.size} ` +
+      `distinct labels, so two questions were annotated with the same number.`
+    );
+  }
 }
 
 /**
@@ -465,36 +510,109 @@ function readPrintedNumber(raw) {
 // Example grouping
 // ---------------------------------------------------------------------------
 
+/** A printed solution label, in the forms Mathpix leaves behind. */
+const SOLUTION_LABEL_RE =
+  /(?:^|\n)\s*\$?\s*(?:Solution|SOLUTION|Sol|தீர்வு)\s*\d*\s*\$?\s*[:.]\s*/;
+
+/** Any stray half of a solution marker pair, so it never leaks into a field. */
+const SOLUTION_MARKER_LINE_RE = new RegExp(
+  `^[ \\t]*(?:${AB_MARKERS.SOLUTION_START}|${AB_MARKERS.SOLUTION_END})[ \\t]*$\n?`,
+  'gm'
+);
+
+/** True for a line that is one of the two solution markers. */
+export function isSolutionMarkerLine(line) {
+  const trimmed = line.trim();
+  return trimmed === AB_MARKERS.SOLUTION_START || trimmed === AB_MARKERS.SOLUTION_END;
+}
+
 /**
  * Split a worked example into its statement and its solution.
  *
- * Textbook examples print as "Example 3: <statement>" followed by
- * "Solution : <working>". The label duplicates question_label, and the working
- * belongs in the lesson's solution context rather than in the question text, so
- * both are lifted out here.
+ * Two sources for the boundary, in order of trust:
  *
- * Returns the whole thing as the statement when no solution marker is found —
- * better a question with the working attached than a silently truncated one.
+ *  1. The annotator's `% ST_SOLUTION` … `% ED_SOLUTION` pair. Required, because
+ *     State board books print the working straight after the statement with no
+ *     label of any kind — "Find the rank of the matrix ..." is followed directly
+ *     by "Let $A=...$", and no rule over the text alone separates them. Without
+ *     the markers the whole example ended up in `question`.
+ *  2. A printed "Solution :" label, for books that have one and for legacy
+ *     hand-annotated files that predate the markers.
+ *
+ * Returns the whole thing as the statement when neither is present — better a
+ * question with the working attached than a silently truncated one.
  */
 function splitExampleBody(body) {
   const withoutLabel = body
     .trim()
     .replace(/^(?:Example|EXAMPLE|எடுத்துக்காட்டு)\s*\d+(?:\.\d+)*\s*[:.\-–]?\s*/, '');
 
-  // "Solution :" is the common form, but NCERT also prints "Solution 1 :" when an
-  // example is worked two ways, and Mathpix sometimes leaves a stray "$" on the
-  // label ("Solution $:"). Both were being missed, leaving the working inside the
-  // question text.
-  const solutionMatch =
-    /(?:^|\n)\s*\$?\s*(?:Solution|SOLUTION|Sol|தீர்வு)\s*\d*\s*\$?\s*[:.]\s*/.exec(withoutLabel);
+  const clean = (text) => text.replace(SOLUTION_MARKER_LINE_RE, '').trim();
+
+  const startIdx = withoutLabel.indexOf(AB_MARKERS.SOLUTION_START);
+  if (startIdx !== -1) {
+    const bodyStart = startIdx + AB_MARKERS.SOLUTION_START.length;
+    const endIdx = withoutLabel.indexOf(AB_MARKERS.SOLUTION_END, bodyStart);
+    // An unclosed opener means the annotation was truncated; the working still
+    // runs to the end of the block, so take it rather than dropping it.
+    const solutionRaw = withoutLabel.slice(bodyStart, endIdx === -1 ? withoutLabel.length : endIdx);
+
+    // The marker sits before the printed label when there is one, so strip the
+    // label here too — the same text is dropped on the fallback path below.
+    const labelMatch = SOLUTION_LABEL_RE.exec(solutionRaw);
+    const solution =
+      labelMatch && solutionRaw.slice(0, labelMatch.index).trim() === ''
+        ? solutionRaw.slice(labelMatch.index + labelMatch[0].length)
+        : solutionRaw;
+
+    return {
+      statement: clean(withoutLabel.slice(0, startIdx)),
+      solution: clean(solution),
+    };
+  }
+
+  const solutionMatch = SOLUTION_LABEL_RE.exec(withoutLabel);
   if (!solutionMatch) {
-    return { statement: withoutLabel.trim(), solution: '' };
+    return { statement: clean(withoutLabel), solution: '' };
   }
 
   return {
-    statement: withoutLabel.slice(0, solutionMatch.index).trim(),
-    solution: withoutLabel.slice(solutionMatch.index + solutionMatch[0].length).trim(),
+    statement: clean(withoutLabel.slice(0, solutionMatch.index)),
+    solution: clean(withoutLabel.slice(solutionMatch.index + solutionMatch[0].length)),
   };
+}
+
+/**
+ * Identity of a section heading for grouping purposes: its number when it has
+ * one ("1.1.4 Testing the consistency of ..." -> "1.1.4"), else the normalised
+ * text.
+ *
+ * Grouping on the full heading text splits one sub-topic's examples into two
+ * blocks whenever the annotator reproduces its title with even a small
+ * difference — a long heading truncated in one chunk and complete in the next is
+ * enough, and a chapter's examples routinely span a chunk boundary. The number
+ * is stable across chunks; the text is not.
+ */
+export function sectionIdentity(name) {
+  if (!name) return '';
+  const number = /^\s*(\d+(?:\.\d+)*)/.exec(name);
+  return number ? number[1] : name.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * The heading text to show for a group whose members disagree about it: the
+ * longest, since the failure mode is truncation rather than invention.
+ */
+function canonicalSectionName(members, field, warnings, label) {
+  const variants = [...new Set(members.map((m) => m[field]).filter((v) => v))];
+  if (variants.length === 0) return members[0]?.[field] ?? '';
+  if (variants.length > 1) {
+    warnings.push(
+      `${label}: examples disagree on ${field} — ${variants.map((v) => `"${v}"`).join(' vs ')}. ` +
+      'Grouped by section number; keeping the longest.'
+    );
+  }
+  return variants.reduce((longest, v) => (v.length > longest.length ? v : longest), variants[0]);
 }
 
 /** "Example" → "Examples" when a group holds more than one. */
@@ -511,16 +629,16 @@ function pluralizeKey(key, count) {
  * hand-annotated pipeline did. Each example becomes one `toc_question_items`
  * entry inside the group.
  */
-function groupExamples(examples) {
+function groupExamples(examples, warnings) {
   const groups = new Map();
 
   for (const example of examples) {
     const key = [
       example.chapter_order ?? '',
-      example.common_parent_section_name ?? '',
-      example.parent_section_name ?? '',
+      sectionIdentity(example.common_parent_section_name),
+      sectionIdentity(example.parent_section_name),
       example.key,
-    ].join(' ');
+    ].join(' | ');
 
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(example);
@@ -532,9 +650,14 @@ function groupExamples(examples) {
     const ordered = members.slice().sort((a, b) => a.order - b.order);
     const first = ordered[0];
     const last = ordered[ordered.length - 1];
+    const groupLabel =
+      ordered.length === 1
+        ? `${first.key} ${first.index}`
+        : `${pluralizeKey(first.key, ordered.length)} ${first.index} - ${last.index}`;
 
     blocks.push({
       type: 'EXAMPLE',
+      sourceOffset: first.sourceOffset,
       name: pluralizeKey(first.key, ordered.length),
       // An example group's name is already number-free; `key` exists so both
       // block types expose the same field to consumers.
@@ -542,8 +665,13 @@ function groupExamples(examples) {
       index: ordered.length === 1 ? first.index : `${first.index} - ${last.index}`,
       order: first.order,
       chapter_order: first.chapter_order,
-      parent_section_name: first.parent_section_name,
-      common_parent_section_name: first.common_parent_section_name,
+      parent_section_name: canonicalSectionName(ordered, 'parent_section_name', warnings, groupLabel),
+      common_parent_section_name: canonicalSectionName(
+        ordered,
+        'common_parent_section_name',
+        warnings,
+        groupLabel
+      ),
       question_type: QUESTION_TYPES.OTHER,
       start_page: first.start_page,
       end_page: last.end_page,
@@ -558,7 +686,18 @@ function groupExamples(examples) {
         };
         // Worked examples ship with their solution; carry it so lesson creation
         // can populate solution_context without a separate solution set.
-        if (solution) item.solution = solution;
+        if (solution) {
+          item.solution = solution;
+        } else {
+          // A worked example without working means the annotator marked no
+          // statement/solution boundary, so the whole example — question AND
+          // answer — is now sitting in `question`.
+          warnings.push(
+            `${first.key} ${example.index}: no solution content — the block carries no ` +
+            `${AB_MARKERS.SOLUTION_START} pair and no printed "Solution :" label, so the working ` +
+            `(if any) was stored as part of the question.`
+          );
+        }
         return item;
       }),
     });
@@ -590,7 +729,7 @@ export function parseAcademicBookBlocks(content) {
     AB_MARKERS.EXERCISE_START,
     AB_MARKERS.EXERCISE_END,
     warnings
-  ).map((body, position) => {
+  ).map(({ body, offset }, position) => {
     const titleInfo = parseTitle(body);
     if (!titleInfo) {
       warnings.push(`Exercise block #${position + 1} has no \\section*{...} heading — using a generated name`);
@@ -603,9 +742,12 @@ export function parseAcademicBookBlocks(content) {
       warnings.push(`${label}: no question markers found — block has no items`);
     }
 
+    const name = titleInfo?.title || `EXERCISE ${position + 1}`;
+
     const block = {
       type: 'EXERCISE',
-      name: titleInfo?.title || `EXERCISE ${position + 1}`,
+      sourceOffset: offset,
+      name,
       // The heading minus its number ("EXERCISE 1.1" → "EXERCISE"). Downstream
       // storage keeps the name and the index in separate fields, so the number
       // must not be baked into the name.
@@ -613,8 +755,13 @@ export function parseAcademicBookBlocks(content) {
       index: titleInfo?.index || String(position + 1),
       order: parseOrder(titleInfo, position + 1),
       chapter_order: parseChapterOrder(body, titleInfo),
-      parent_section_name: parseParentSectionName(body),
-      common_parent_section_name: parseCommonParentSectionName(body),
+      // An exercise is its OWN common parent and has no parent section — it
+      // belongs to the chapter, not to whichever sub-topic happens to precede
+      // it. Derived from the block's own heading rather than read from the
+      // annotation: the exercise's name is not a judgement call, and letting the
+      // annotator supply it just gave the last `\subsection*{1.1.4 ...}` seen.
+      common_parent_section_name: name,
+      parent_section_name: '',
       question_type: questionType,
       start_page: parsePageNumber(body, AB_META_PREFIXES.PAGE_NO),
       end_page: parsePageNumber(body, AB_META_PREFIXES.END_PAGE_NO),
@@ -635,21 +782,27 @@ export function parseAcademicBookBlocks(content) {
     AB_MARKERS.EXAMPLE_START,
     AB_MARKERS.EXAMPLE_END,
     warnings
-  ).map((body, position) => {
+  ).map(({ body, offset }, position) => {
     const titleInfo = parseTitle(body);
     if (!titleInfo) {
       warnings.push(`Example block #${position + 1} has no \\section*{Example n} heading — using its source position`);
     }
 
     // Everything except the metadata comments and the inserted heading is the
-    // example itself (statement plus its Solution body).
+    // example itself (statement plus its Solution body). The solution markers
+    // are the exception — they are the boundary `splitExampleBody` reads, so
+    // they have to survive this filter and are stripped there instead.
     const exampleBody = body
       .split('\n')
-      .filter((line) => !/^\s*%/.test(line) && !/^\s*\\section\*\{/.test(line))
+      .filter(
+        (line) =>
+          (!/^\s*%/.test(line) || isSolutionMarkerLine(line)) && !/^\s*\\section\*\{/.test(line)
+      )
       .join('\n')
       .trim();
 
     return {
+      sourceOffset: offset,
       key: titleInfo?.key || 'Example',
       index: titleInfo?.index || String(position + 1),
       order: parseOrder(titleInfo, position + 1),
@@ -663,14 +816,24 @@ export function parseAcademicBookBlocks(content) {
     };
   });
 
-  const blocks = [...exerciseBlocks, ...groupExamples(exampleModels)];
+  const blocks = [...exerciseBlocks, ...groupExamples(exampleModels, warnings)];
 
-  // Chapter first, then position within the chapter; unnumbered blocks last.
+  // Chapter first, then the order the blocks appear in the book — the examples
+  // for a topic, then that topic's exercise, then the next topic. Sorting by the
+  // number in the heading instead put every example ahead of every exercise, and
+  // collided "EXERCISE 1.1" with an unnumbered "Miscellaneous problems" (both
+  // reduce to 1).
   blocks.sort((a, b) => {
     const chapterDiff = (parseInt(a.chapter_order, 10) || 0) - (parseInt(b.chapter_order, 10) || 0);
     if (chapterDiff !== 0) return chapterDiff;
-    if (a.type !== b.type) return a.type === 'EXAMPLE' ? -1 : 1;
-    return (a.order || 0) - (b.order || 0);
+    return a.sourceOffset - b.sourceOffset;
+  });
+
+  // `order` is the block's position in the chapter, which is what downstream
+  // lesson creation sequences on. The heading number lives in `index`.
+  blocks.forEach((block, position) => {
+    block.order = position + 1;
+    delete block.sourceOffset;
   });
 
   return { blocks, warnings };

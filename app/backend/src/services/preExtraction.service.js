@@ -199,6 +199,10 @@ const ANNOTATION_CONFIGS = {
     label: 'academic book',
     extraMarkerCounts: [
       ['examples', AB_MARKERS.EXAMPLE_START, AB_MARKERS.EXAMPLE_END],
+      // Zero of these on a chapter full of worked examples means every example's
+      // working stayed glued to its statement — the failure this count exists
+      // to make visible in the log rather than in the extracted questions.
+      ['example statement/solution splits', AB_MARKERS.SOLUTION_START, AB_MARKERS.SOLUTION_END],
     ],
     splitPatterns: 'chapter',
   },
@@ -284,10 +288,32 @@ export const ANNOTATION_SPLIT_PATTERNS = {
 };
 
 /**
+ * Heading number of a topic heading: `\\subsection*{1.2.1 Adjoint of a Square
+ * Matrix}` → '1.2.1'. Null when the heading does not open with a number.
+ */
+function headingNumber(heading) {
+  const match = /\{\s*(\d+(?:\.\d+)*)(?![\d.])/.exec(heading || '');
+  return match ? match[1] : null;
+}
+
+/**
+ * True for a top-level topic heading ("1.2 ..."), false for a sub-topic
+ * ("1.2.1 ..."). The annotator attributes a block's COMMON_PARENT to the former
+ * and its PARENT to the latter, so the two have to travel separately.
+ */
+function isTopicRoot(heading) {
+  const number = headingNumber(heading);
+  return !!number && number.split('.').length <= 2;
+}
+
+/**
  * Split a document into chunks that never cut through a block.
  *
  * Each chunk gets a `headingHint` naming the heading in force at its start, so
- * blocks appearing before the first heading of a chunk are still attributable.
+ * blocks appearing before the first heading of a chunk are still attributable,
+ * plus a `commonHeadingHint` naming the enclosing top-level topic. Without the
+ * second hint a chunk that opens inside `1.2.1 Adjoint of a Square Matrix` has
+ * no way to name topic `1.2`, whose title appeared in an earlier chunk.
  */
 export function splitForAnnotation(content, options = {}) {
   const {
@@ -318,21 +344,30 @@ export function splitForAnnotation(content, options = {}) {
   let current = '';
   let currentHint = null;
   let pendingHint = null;
+  let currentCommonHint = null;
+  let pendingCommonHint = null;
 
   const flush = () => {
     if (current.trim() === '') return;
-    chunks.push({ text: current, headingHint: currentHint });
+    chunks.push({ text: current, headingHint: currentHint, commonHeadingHint: currentCommonHint });
     current = '';
     currentHint = pendingHint;
+    currentCommonHint = pendingCommonHint;
   };
 
   for (const section of sections) {
     if (current !== '' && current.length + section.text.length > maxChars) {
       flush();
     }
-    if (current === '') currentHint = pendingHint;
+    if (current === '') {
+      currentHint = pendingHint;
+      currentCommonHint = pendingCommonHint;
+    }
     current += section.text;
-    if (section.heading) pendingHint = section.heading;
+    if (section.heading) {
+      pendingHint = section.heading;
+      if (isTopicRoot(section.heading)) pendingCommonHint = section.heading;
+    }
 
     // A single section bigger than the budget is emitted on its own; the model
     // handles it as one oversized chunk rather than being cut mid-block.
@@ -377,10 +412,12 @@ export function splitForAnnotation(content, options = {}) {
       // The heading in force at this piece is the last primary heading appearing
       // BEFORE it within the chunk — not the hint carried in from the previous
       // chunk, which would attribute EXERCISE 1.3 to topic 1.2.
-      const preceding = chunk.text.slice(0, bounds[i]).match(primaryScanRe);
+      const preceding = (chunk.text.slice(0, bounds[i]).match(primaryScanRe) || []).map((h) => h.trim());
+      const precedingRoot = preceding.filter(isTopicRoot).pop();
       result.push({
         text: piece,
-        headingHint: preceding ? preceding[preceding.length - 1].trim() : chunk.headingHint,
+        headingHint: preceding.length ? preceding[preceding.length - 1] : chunk.headingHint,
+        commonHeadingHint: precedingRoot || chunk.commonHeadingHint,
       });
     }
   }
@@ -539,10 +576,17 @@ export const preExtractionService = {
     const annotatedChunks = [];
 
     for (let i = 0; i < chunks.length; i++) {
-      const { text, headingHint } = chunks[i];
-      const hint = headingHint
-        ? `\n${patterns.hintLabel} AT THE START OF THIS EXCERPT (use it for any block that appears before the first heading below): ${headingHint}\n`
-        : '';
+      const { text, headingHint, commonHeadingHint } = chunks[i];
+      const hintLines = [];
+      // The enclosing topic is only worth stating when it differs from the
+      // heading in force; when they are the same the single line below says it.
+      if (commonHeadingHint && commonHeadingHint !== headingHint) {
+        hintLines.push(`ENCLOSING TOPIC AT THE START OF THIS EXCERPT (its title appeared in an earlier excerpt — use it as the COMMON PARENT): ${commonHeadingHint}`);
+      }
+      if (headingHint) {
+        hintLines.push(`${patterns.hintLabel} AT THE START OF THIS EXCERPT (use it for any block that appears before the first heading below): ${headingHint}`);
+      }
+      const hint = hintLines.length ? `\n${hintLines.join('\n')}\n` : '';
 
       const prompt = `${instructions}\n${hint}
 This is excerpt ${i + 1} of ${chunks.length} from the document. Annotate ONLY this excerpt and return it in full.

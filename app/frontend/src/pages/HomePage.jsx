@@ -12,8 +12,10 @@ import {
   CheckCircle,
   Save,
   Pencil,
+  Upload,
 } from 'lucide-react';
 import { useActiveContext } from '../hooks/useActiveContext';
+import ImportChaptersModal from '../components/ImportChaptersModal';
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState('job');
@@ -324,6 +326,7 @@ function ChaptersTab() {
   const queryClient = useQueryClient();
   const [selectedBookId, setSelectedBookId] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [editingChapter, setEditingChapter] = useState(null);
   const [formData, setFormData] = useState({ name: '', display_name: '', chapter_number: '' });
 
@@ -353,6 +356,26 @@ function ChaptersTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chapters'] }),
   });
 
+  const importMutation = useMutation({
+    mutationFn: ({ chapters: importedChapters, bookRefId }) =>
+      api.post('/chapters/import', {
+        book_id: selectedBookId,
+        // Forwarded so the server can reject a file exported for another book.
+        book_ref_id: bookRefId || undefined,
+        chapters: importedChapters,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chapters'] }),
+  });
+
+  // The modal renders its own result summary, so hand it the payload rather
+  // than closing on success.
+  const handleImport = async (importedChapters, bookRefId) => {
+    const response = await importMutation.mutateAsync({ chapters: importedChapters, bookRefId });
+    return response.data;
+  };
+
+  const selectedBook = books?.data?.find((b) => b.id === selectedBookId);
+
   const openCreate = () => { setEditingChapter(null); setFormData({ name: '', display_name: '', chapter_number: '', ref_id: '' }); setShowModal(true); };
   const openEdit = (ch) => { setEditingChapter(ch); setFormData({ name: ch.name, display_name: ch.display_name || '', chapter_number: ch.chapter_number || '', ref_id: ch.ref_id || '' }); setShowModal(true); };
   const closeModal = () => { setShowModal(false); setEditingChapter(null); };
@@ -381,10 +404,16 @@ function ChaptersTab() {
           <h2 className="text-xl font-bold text-gray-800">Chapters</h2>
           <p className="text-gray-500 text-sm">Manage chapters within books</p>
         </div>
-        <button onClick={openCreate} disabled={!selectedBookId}
-          className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-          <Plus className="w-5 h-5 mr-2" /> Add Chapter
-        </button>
+        <div className="flex gap-3">
+          <button onClick={() => setShowImportModal(true)} disabled={!selectedBookId}
+            className="flex items-center px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed">
+            <Upload className="w-5 h-5 mr-2" /> Import JSON
+          </button>
+          <button onClick={openCreate} disabled={!selectedBookId}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            <Plus className="w-5 h-5 mr-2" /> Add Chapter
+          </button>
+        </div>
       </div>
 
       <div className="mb-6">
@@ -470,6 +499,13 @@ function ChaptersTab() {
           </div>
         </Modal>
       )}
+
+      <ImportChaptersModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImport={handleImport}
+        book={selectedBook}
+      />
     </div>
   );
 }
